@@ -55,39 +55,4 @@ router.get('/managed', authorize(), async (req, res) => {
   }
 });
 
-// Update user modules
-router.put('/:userId/modules', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { modules } = req.body;
-    const requestingUser = req.user;
-    
-    const targetUser = await User.findById(userId);
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    // Check permission to modify this user
-    const canManage = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(targetUser.role) ||
-                      targetUser.parentAccountId?.toString() === requestingUser._id.toString() ||
-                      requestingUser.role === 'system_admin';
-                      
-    if (!canManage) {
-      return res.status(403).json({ error: 'Not authorized to modify this user' });
-    }
-    
-    targetUser.modules = modules.map(moduleId => ({
-      moduleId,
-      permissions: ['read', 'write'],
-      grantedBy: requestingUser._id,
-      grantedAt: new Date()
-    }));
-    
-    await targetUser.save();
-    res.json({ success: true, user: targetUser });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
 module.exports = router;
