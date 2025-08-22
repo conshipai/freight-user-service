@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const userRoutes = require('./routes/users');
+const jwt = require('jsonwebtoken');  // ADD THIS LINE
 require('dotenv').config();
 
 const app = express();
@@ -9,6 +9,9 @@ const app = express();
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Routes
+const userRoutes = require('./routes/users');
 app.use('/api/users', userRoutes);
 
 // Health check
@@ -29,7 +32,8 @@ app.get('/test', (req, res) => {
       'GET /test',
       'POST /api/users',
       'GET /api/users/managed',
-      'PUT /api/users/:userId/modules'
+      'PUT /api/users/:userId/modules',
+      'POST /test-token'
     ]
   });
 });
@@ -46,30 +50,76 @@ async function createTestUser() {
         name: 'Test Admin',
         role: 'system_admin',
         active: true,
-        modules: ['quotes', 'tracking', 'analytics', 'users']
+        modules: [  // CHANGED: Array of objects instead of strings
+          {
+            moduleId: 'quotes',
+            name: 'Quotes & Pricing',
+            permissions: ['read', 'write', 'delete', 'admin'],
+            grantedAt: new Date()
+          },
+          {
+            moduleId: 'tracking',
+            name: 'Shipment Tracking',
+            permissions: ['read', 'write', 'delete', 'admin'],
+            grantedAt: new Date()
+          },
+          {
+            moduleId: 'analytics',
+            name: 'Analytics & Reports',
+            permissions: ['read', 'write', 'delete', 'admin'],
+            grantedAt: new Date()
+          },
+          {
+            moduleId: 'users',
+            name: 'User Management',
+            permissions: ['read', 'write', 'delete', 'admin'],
+            grantedAt: new Date()
+          }
+        ]
       });
       await admin.save();
-      console.log('✅ Test admin created: admin@test.com / testpass123');
+      console.log('Test admin created: admin@test.com / testpass123');
     }
   } catch (error) {
-    console.error('❌ Test user creation error:', error.message);
+    console.error('Test user creation error:', error.message);
   }
 }
 
+// TEMPORARY: Generate test token (remove in production!)
+app.post('/test-token', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    const token = jwt.sign(
+      { userId: user._id, role: user.role },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '24h' }
+    );
+    
+    res.json({ token, userId: user._id });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // MongoDB connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/freight';
-
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
 .then(async () => {
-  console.log('✅ Connected to MongoDB');
-  await createTestUser(); // Create the admin user once DB is ready
+  console.log('Connected to MongoDB');
+  await createTestUser();
 })
-.catch(err => console.error('❌ MongoDB connection error:', err));
+.catch(err => console.error('MongoDB connection error:', err));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 User Service running on port ${PORT}`);
+  console.log(`User Service running on port ${PORT}`);
 });
