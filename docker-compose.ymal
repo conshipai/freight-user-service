@@ -1,9 +1,28 @@
 version: '3.8'
 
 services:
-  user-service:
-    build: ./services/user-service
+  auth-service:
+    build: ./services/auth-service
+    container_name: freight-auth
+    ports:
+      - "3000:3000"
     environment:
       - MONGODB_URI=mongodb://mongo:27017/freight
+      - JWT_SECRET=your-secret-key-change-this
+    networks:
+      - coolify
+
+  user-service:
+    build: ./services/user-service
+    container_name: freight-users
     ports:
       - "3001:3001"
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/freight
+      - AUTH_SERVICE_URL=http://freight-auth:3000
+    networks:
+      - coolify
+
+networks:
+  coolify:
+    external: true  # This tells Docker to use the existing coolify network
