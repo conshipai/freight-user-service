@@ -3,26 +3,24 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
-const userRoutes = require('./routes/users');
-const permissionRoutes = require('./routes/permissions');
-
 const app = express();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Routes
-app.use('/api/users', userRoutes);
-app.use('/api/permissions', permissionRoutes);
-
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', service: 'user-service' });
+  res.json({ 
+    status: 'healthy', 
+    service: 'user-service',
+    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
 });
 
 // MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongo:27017/freight', {
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/freight';
+mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
