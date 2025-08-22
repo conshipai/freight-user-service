@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  user-service:
+    build: ./services/user-service
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/freight
+    ports:
+      - "3001:3001"
