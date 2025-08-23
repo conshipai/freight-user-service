@@ -22,7 +22,9 @@ app.get('/health', (req, res) => {
     mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
 });
-
+app.get('/api/apps/registry', (req, res) => {
+  res.json([]);  // Return empty array for now
+});
 // Test endpoint
 app.get('/test', (req, res) => {
   res.json({ 
