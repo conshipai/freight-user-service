@@ -4,6 +4,7 @@ const Quote = require('../models/Quote');
 const RateProvider = require('../models/RateProvider');
 const Partner = require('../models/Partner');
 const ServiceArea = require('../models/ServiceArea');
+const ProviderFactory = require('../services/providers/ProviderFactory');
 const { authorize } = require('../middleware/authorize');
 
 // ─────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ router.post('/create', authorize(), async (req, res) => {
   }
 });
 
-// Get rates from providers
+// Get rates from providers (Updated with real API calls)
 async function getRatesFromProviders(shipment) {
   const providers = await RateProvider.find({
     status: 'active',
@@ -59,89 +60,81 @@ async function getRatesFromProviders(shipment) {
   
   const rates = [];
   
-  for (const provider of providers) {
+  // Use Promise.allSettled for parallel requests with timeout
+  const ratePromises = providers.map(async (providerConfig) => {
+    const startTime = Date.now();
+    
     try {
-      const startTime = Date.now();
-      
-      // Get rate based on provider type
-      let rate;
-      if (provider.type === 'api') {
-        rate = await getApiRate(provider, shipment);
-      } else {
-        // For manual providers, use stored rates or skip
-        continue;
+      // Skip manual providers
+      if (providerConfig.type === 'manual') {
+        return null;
       }
       
-      if (rate) {
-        rates.push({
-          providerId: provider._id,
-          providerName: provider.name,
-          providerCode: provider.code,
-          costs: rate.costs,
-          transitTime: rate.transitTime,
-          responseTime: Date.now() - startTime
-        });
-        
-        // Update provider metrics
-        provider.metrics.totalQuotes++;
-        provider.metrics.successfulQuotes++;
-        provider.metrics.averageResponseTime = 
-          (provider.metrics.averageResponseTime * (provider.metrics.totalQuotes - 1) + (Date.now() - startTime)) 
-          / provider.metrics.totalQuotes;
-        await provider.save();
-      }
+      // Create provider instance using factory
+      const provider = ProviderFactory.create(providerConfig.toObject());
+      
+      // Set a timeout for the API call (e.g., 10 seconds)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Provider timeout')), 10000)
+      );
+      
+      // Race between the actual API call and timeout
+      const quote = await Promise.race([
+        provider.getQuote({
+          mode: shipment.mode,
+          origin: shipment.origin,
+          destination: shipment.destination,
+          cargo: shipment.cargo,
+          incoterms: shipment.incoterms,
+          commodities: shipment.commodities
+        }),
+        timeoutPromise
+      ]);
+      
+      const responseTime = Date.now() - startTime;
+      
+      // Update success metrics
+      providerConfig.metrics.totalQuotes++;
+      providerConfig.metrics.successfulQuotes++;
+      providerConfig.metrics.averageResponseTime = 
+        (providerConfig.metrics.averageResponseTime * (providerConfig.metrics.totalQuotes - 1) + responseTime) 
+        / providerConfig.metrics.totalQuotes;
+      providerConfig.metrics.lastSuccessAt = new Date();
+      await providerConfig.save();
+      
+      return {
+        ...quote,
+        providerId: providerConfig._id,
+        providerName: providerConfig.name,
+        providerCode: providerConfig.code,
+        responseTime
+      };
+      
     } catch (error) {
-      console.error(`Failed to get rate from ${provider.name}:`, error);
+      console.error(`Failed to get rate from ${providerConfig.name}:`, error);
       
       // Update failure metrics
-      provider.metrics.totalQuotes++;
-      provider.metrics.failedQuotes++;
-      provider.metrics.lastFailureAt = new Date();
-      provider.metrics.failureReason = error.message;
-      await provider.save();
+      providerConfig.metrics.totalQuotes++;
+      providerConfig.metrics.failedQuotes++;
+      providerConfig.metrics.lastFailureAt = new Date();
+      providerConfig.metrics.failureReason = error.message;
+      await providerConfig.save();
+      
+      return null;
+    }
+  });
+  
+  // Wait for all promises to settle
+  const results = await Promise.allSettled(ratePromises);
+  
+  // Filter out failed/null results and flatten
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value) {
+      rates.push(result.value);
     }
   }
   
   return rates;
-}
-
-// Simulate API rate fetching (you'll implement actual API calls)
-async function getApiRate(provider, shipment) {
-  // This is where you'd integrate with actual APIs
-  // For now, we'll simulate it
-  
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
-  
-  // Generate mock rate based on shipment
-  const baseCost = calculateBaseCost(shipment);
-  
-  return {
-    costs: {
-      freight: baseCost,
-      fuel: baseCost * 0.15,
-      security: 25,
-      handling: 50,
-      documentation: 35,
-      other: [],
-      totalCost: baseCost + (baseCost * 0.15) + 25 + 50 + 35
-    },
-    transitTime: Math.floor(Math.random() * 5) + 2 // 2-7 days
-  };
-}
-
-// Calculate base cost (mock function)
-function calculateBaseCost(shipment) {
-  const { mode, cargo } = shipment;
-  const weight = cargo.weight || 100;
-  
-  const ratePerKg = {
-    air: 5,
-    ocean: 0.5,
-    road: 1.5
-  };
-  
-  return weight * (ratePerKg[mode] || 1);
 }
 
 // Process rates with markup
@@ -191,9 +184,9 @@ async function processRatesWithMarkup(rates, shipment) {
     processedRates.push({
       ...rate,
       markup: {
-        percentage: provider.markupSettings[shipment.mode].percentage,
+        percentage: provider.markupSettings[shipment.mode]?.percentage || 0,
         amount: markupAmount,
-        flatFee: provider.markupSettings[shipment.mode].flatFee || 0,
+        flatFee: provider.markupSettings[shipment.mode]?.flatFee || 0,
         totalMarkup: markupAmount
       },
       additionalFees,
@@ -288,6 +281,86 @@ router.get('/', authorize(), async (req, res) => {
       .select('quoteNumber status shipment.origin shipment.destination shipment.mode createdAt validUntil');
     
     res.json({ success: true, quotes });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Refresh rates for an existing quote
+router.post('/:quoteNumber/refresh', authorize(), async (req, res) => {
+  try {
+    const quote = await Quote.findOne({ quoteNumber: req.params.quoteNumber });
+    
+    if (!quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
+    if (quote.status !== 'quoted' && quote.status !== 'draft') {
+      return res.status(400).json({ error: 'Cannot refresh rates for this quote status' });
+    }
+    
+    // Get fresh rates
+    const rates = await getRatesFromProviders(quote.shipment);
+    
+    // Apply markups
+    const processedRates = await processRatesWithMarkup(rates, quote.shipment);
+    
+    // Update quote
+    quote.rates = processedRates;
+    quote.validUntil = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000); // Reset validity
+    
+    // Add to history
+    quote.history.push({
+      action: 'refreshed',
+      user: req.user._id,
+      details: { previousRateCount: quote.rates.length, newRateCount: processedRates.length }
+    });
+    
+    await quote.save();
+    
+    res.json({
+      success: true,
+      message: 'Rates refreshed successfully',
+      quote
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Export quote as PDF
+router.get('/:quoteNumber/export', authorize(), async (req, res) => {
+  try {
+    const quote = await Quote.findOne({ quoteNumber: req.params.quoteNumber })
+      .populate('requestedBy', 'name email company')
+      .populate('rates.providerId', 'name code logo');
+    
+    if (!quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
+    // TODO: Implement PDF generation
+    // For now, return the quote data that would be used for PDF
+    res.json({
+      success: true,
+      message: 'PDF export not yet implemented',
+      data: {
+        quoteNumber: quote.quoteNumber,
+        customer: {
+          email: quote.customerEmail,
+          company: quote.customerCompany
+        },
+        shipment: quote.shipment,
+        rates: quote.rates.map(rate => ({
+          provider: rate.providerName,
+          transitTime: rate.transitTime,
+          sellPrice: rate.sellRates.totalSell,
+          validUntil: rate.validUntil
+        })),
+        validUntil: quote.validUntil,
+        createdAt: quote.createdAt
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
