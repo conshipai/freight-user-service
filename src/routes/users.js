@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Company = require('../models/Company'); // Add this import
 const { authorize } = require('../middleware/authorize');
 const { PERMISSION_HIERARCHY } = require('../config/permissions');
 
@@ -9,7 +10,9 @@ const { PERMISSION_HIERARCHY } = require('../config/permissions');
 // ─────────────────────────────────────────────────────────────
 router.get('/me', authorize(), async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await User.findById(req.user._id)
+      .select('-password')
+    .populate('companyId');
     res.json({ success: true, user });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -17,28 +20,7 @@ router.get('/me', authorize(), async (req, res) => {
 });
 
 // Create user
-router.post('/', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
-  try {
-    const { email, password, name, role, parentAccountId, company } = req.body;
-    const requestingUser = req.user;
-    
-    // Check if requesting user can create this role
-    const canCreate = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(role);
-    if (!canCreate && requestingUser.role !== 'system_admin') {
-      return res.status(403).json({ error: 'Not authorized to create this user type' });
-    }
-
-    const user = new User({
-      email,
-      password,
-      name,
-      role,
-      parentAccountId: parentAccountId || (role.includes('_user') ? requestingUser._id : null),
-      company,
-      modules: PERMISSION_HIERARCHY[role]?.defaultModules || []
-    });
-
-    await user.save();
+.populate('companyId');
     const userObj = user.toObject();
     delete userObj.password;
     
