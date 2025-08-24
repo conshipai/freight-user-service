@@ -12,10 +12,12 @@ app.use(express.json());
 
 // Routes
 const userRoutes = require('./routes/users');
+const authRoutes = require('./routes/auth');
 const companyRoutes = require('./routes/companies');
 const quoteRoutes = require('./routes/quotes');
 const costRoutes = require('./routes/costs');
 
+app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/quotes', quoteRoutes);
