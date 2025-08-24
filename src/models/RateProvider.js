@@ -103,4 +103,86 @@ const rateProviderSchema = new mongoose.Schema({
     active: { type: Boolean, default: true }
   }],
   
-  // Rate validity and
+  // Rate validity and caching
+  rateValidity: {
+    type: Number,
+    default: 24, // hours
+    min: 1,
+    max: 720    // 30 days max
+  },
+  cachingEnabled: {
+    type: Boolean,
+    default: true
+  },
+  
+  // Priority for rate selection (lower number = higher priority)
+  priority: {
+    type: Number,
+    default: 100,
+    min: 1,
+    max: 1000
+  },
+  
+  // Status
+  status: {
+    type: String,
+    enum: ['active', 'inactive', 'testing', 'suspended'],
+    default: 'active'
+  },
+  
+  // Performance metrics
+  metrics: {
+    totalQuotes: { type: Number, default: 0 },
+    successfulQuotes: { type: Number, default: 0 },
+    failedQuotes: { type: Number, default: 0 },
+    averageResponseTime: { type: Number, default: 0 }, // milliseconds
+    lastSuccessAt: Date,
+    lastFailureAt: Date,
+    failureReason: String
+  },
+  
+  // Notes and metadata
+  notes: String,
+  tags: [String], // for filtering/grouping
+  
+}, {
+  timestamps: true
+});
+
+// Indexes
+rateProviderSchema.index({ code: 1 });
+rateProviderSchema.index({ status: 1 });
+rateProviderSchema.index({ 'services.mode': 1 });
+
+// Method to calculate markup for a given cost
+rateProviderSchema.methods.calculateMarkup = function(cost, mode, origin, destination) {
+  // Check for lane-specific markup first
+  const laneMarkup = this.laneMarkups.find(lane => 
+    lane.active &&
+    lane.origin === origin &&
+    lane.destination === destination &&
+    lane.mode === mode
+  );
+  
+  if (laneMarkup) {
+    const markupAmount = cost * (laneMarkup.percentage / 100);
+    return markupAmount + (laneMarkup.flatFee || 0);
+  }
+  
+  // Use general markup settings
+  const settings = this.markupSettings[mode];
+  if (!settings) return 0;
+  
+  let markupAmount = cost * (settings.percentage / 100);
+  
+  // Apply minimum and maximum constraints
+  markupAmount = Math.max(markupAmount, settings.minimumMarkup || 0);
+  markupAmount = Math.min(markupAmount, settings.maximumMarkup || Infinity);
+  
+  // Add flat fee
+  markupAmount += settings.flatFee || 0;
+  
+  return markupAmount;
+};
+
+module.exports = mongoose.model('RateProvider', rateProviderSchema);
