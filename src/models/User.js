@@ -28,7 +28,7 @@ const userSchema = new mongoose.Schema({
     ],
     required: true
   },
- companyId: {
+  companyId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Company',
     required: false
@@ -48,6 +48,18 @@ const userSchema = new mongoose.Schema({
       default: Date.now
     }
   }],
+
+  // --- NEW: markup profile reference + direct-costs override ---
+  markupProfileId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'MarkupProfile'
+  },
+  alwaysShowDirectCosts: {
+    type: Boolean,
+    default: false
+  },
+  // ------------------------------------------------------------
+
   active: {
     type: Boolean,
     default: true
@@ -67,5 +79,10 @@ userSchema.pre('save', async function(next) {
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
+
+// Helpful indexes
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ companyId: 1 });
+userSchema.index({ role: 1 });
 
 module.exports = mongoose.model('User', userSchema);
