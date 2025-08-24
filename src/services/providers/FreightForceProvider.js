@@ -1,10 +1,10 @@
+// src/services/providers/FreightForceProvider.js
 const BaseProvider = require('./BaseProvider');
 const axios = require('axios');
 
 class FreightForceProvider extends BaseProvider {
   constructor(config) {
     super(config);
-    
     this.baseURL = config.apiConfig.baseUrl || 'https://dev-ffapi.freightforce.com';
     this.credentials = {
       username: config.apiConfig.username,
@@ -20,15 +20,14 @@ class FreightForceProvider extends BaseProvider {
       baseURL: this.baseURL,
       timeout: this.timeout,
       headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'FreightPlatform/1.0'
+        'Content-Type': 'application/json'
       }
     });
   }
 
   async authenticate() {
     try {
-      // Try registration first (in case it's a new account)
+      // Try registration first (in case new account)
       try {
         await this.client.post('/api/Auth/register', {
           accountId: this.credentials.accountId,
@@ -37,10 +36,10 @@ class FreightForceProvider extends BaseProvider {
           contactEmail: this.credentials.contactEmail
         });
       } catch (regError) {
-        // Registration might fail if already registered, that's OK
+        // Registration might fail if already registered - that's OK
       }
 
-      // Now authenticate
+      // Authenticate
       const response = await this.client.post('/api/Auth/token', {
         username: this.credentials.username,
         password: this.credentials.password,
@@ -48,7 +47,7 @@ class FreightForceProvider extends BaseProvider {
       });
 
       this.token = response.data.token || response.data.access_token;
-      this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
       this.client.defaults.headers.common['Authorization'] = `Bearer ${this.token}`;
       
       return this.token;
@@ -64,93 +63,73 @@ class FreightForceProvider extends BaseProvider {
     return this.token;
   }
 
-  async getQuote(request) {
-    const { mode, origin, destination, cargo } = request;
-    
-    // FreightForce handles ground/pickup only
-    if (mode !== 'road') {
-      throw new Error('FreightForce only handles ground transportation');
-    }
-
-    await this.ensureValidToken();
-
-    // Build FreightForce request
-    const ffRequest = {
-      rateType: "L",
-      origin: origin.postalCode,
-      originType: "Z",
-      destination: destination.airportCode || destination.city,
-      destinationType: destination.airportCode ? "T" : "C",
-      weight: Math.ceil(cargo.weight),
-      dimensions: cargo.pieces ? [{
-        qty: cargo.pieces,
-        weight: Math.ceil(cargo.weight / cargo.pieces),
-        length: cargo.length || 24,
-        width: cargo.width || 24,
-        height: cargo.height || 24,
-        description: cargo.description || "General Cargo"
-      }] : [{
-        qty: 1,
-        weight: Math.ceil(cargo.weight),
-        length: 24,
-        width: 24,
-        height: 24,
-        description: cargo.description || "General Cargo"
-      }]
-    };
-
-    const response = await this.executeWithRetry(async () => {
-      return await this.client.post('/api/Quote', ffRequest);
-    });
-
-    return this.parseResponse(response.data, request);
-  }
-
-  parseResponse(data, originalRequest) {
-    const freightCharge = parseFloat(data.freight_Charge) || 0;
-    const fuelSurcharge = parseFloat(data.freight_FSC) || 0;
-    const accessorials = parseFloat(data.accessorialTotal) || 0;
-    const totalCost = freightCharge + fuelSurcharge + accessorials;
-
-    // Apply markup
-    const { markup, total: totalWithMarkup } = this.calculateMarkup(totalCost, 'road');
-    
-    // Apply additional fees
-    const { fees, totalFees } = this.applyAdditionalFees(totalCost, 'road');
-    
-    const finalTotal = totalWithMarkup + totalFees;
+  transformRequest(request) {
+    // Calculate total weight in lbs
+    const totalWeight = request.shipment.cargo.pieces.reduce(
+      (sum, piece) => sum + (piece.weight * piece.quantity), 
+      0
+    );
 
     return {
-      provider: this.name,
-      providerCode: this.code,
-      service: 'Ground Transportation',
-      mode: 'road',
+      rateType: "L",
+      origin: request.shipment.origin.zipCode,
+      originType: "Z",
+      destination: request.shipment.origin.airport,
+      destinationType: "T",
+      weight: Math.ceil(totalWeight),
+      dimensions: request.shipment.cargo.pieces.map(piece => ({
+        qty: piece.quantity,
+        weight: Math.ceil(piece.weight),
+        length: Math.ceil(piece.length || 24),
+        width: Math.ceil(piece.width || 24),
+        height: Math.ceil(piece.height || 24),
+        description: piece.commodity || "General Cargo"
+      }))
+    };
+  }
+
+  parseResponse(apiResponse, originalRequest) {
+    const freightCharge = parseFloat(apiResponse.freight_Charge) || 0;
+    const fuelSurcharge = parseFloat(apiResponse.freight_FSC) || 0;
+    const accessorials = parseFloat(apiResponse.accessorialTotal) || 0;
+    const totalCost = parseFloat(apiResponse.quoteRateTotal) || 0;
+
+    return {
       costs: {
         freight: freightCharge,
         fuel: fuelSurcharge,
-        security: 0,
-        handling: accessorials,
-        documentation: 0,
-        other: [],
-        totalCost: totalCost
+        accessorials: accessorials,
+        totalCost: totalCost,
+        currency: 'USD'
       },
-      markup: {
-        percentage: this.markupSettings.road.percentage,
-        amount: markup,
-        totalMarkup: markup
-      },
-      additionalFees: fees,
-      sellRates: {
-        freight: freightCharge * (1 + this.markupSettings.road.percentage / 100),
-        fuel: fuelSurcharge * (1 + this.markupSettings.road.percentage / 100),
-        handling: accessorials * (1 + this.markupSettings.road.percentage / 100),
-        additionalFees: totalFees,
-        totalSell: finalTotal
-      },
-      transitTime: 1,
+      service: 'Ground',
+      serviceType: 'Door-to-Airport',
+      transitTime: '1 day',
+      transitDays: 1,
       validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      raw: data
+      rawResponse: apiResponse
     };
+  }
+
+  async getQuote(request) {
+    const startTime = Date.now();
+    
+    try {
+      await this.ensureValidToken();
+      
+      const ffRequest = this.transformRequest(request);
+      
+      const response = await this.executeWithRetry(async () => {
+        return await this.client.post('/api/Quote', ffRequest);
+      });
+      
+      const result = this.parseResponse(response.data, request);
+      result.responseTimeMs = Date.now() - startTime;
+      
+      return result;
+    } catch (error) {
+      throw new Error(`FreightForce quote failed: ${error.message}`);
+    }
   }
 }
 
