@@ -28,13 +28,10 @@ const userSchema = new mongoose.Schema({
     ],
     required: true
   },
-  company: {
-    id: mongoose.Schema.Types.ObjectId,
-    name: String,
-    type: {
-      type: String,
-      enum: ['conship', 'customer', 'foreign_partner']
-    }
+ companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company',
+    required: false
   },
   parentAccountId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -44,7 +41,7 @@ const userSchema = new mongoose.Schema({
   modules: [{
     moduleId: String,
     name: String,
-    permissions: [String], // ['read', 'write', 'delete', 'admin']
+    permissions: [String],
     grantedBy: mongoose.Schema.Types.ObjectId,
     grantedAt: {
       type: Date,
