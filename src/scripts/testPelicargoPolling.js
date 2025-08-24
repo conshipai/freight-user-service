@@ -59,9 +59,9 @@ async function testPelicargoWithPolling() {
         }
       },
       {
-        name: 'Regular Lane - LAX to JFK',
+        name: 'Regular Lane - LAX to LHR',
         origin: 'LAX',
-        destination: 'JFK',
+        destination: 'LHR',  // London - international route
         expectedTime: '20-30 minutes',
         cargo: {
           pieces: [{
@@ -149,13 +149,17 @@ async function submitAndPoll(testCase) {
     const pelicargoRequestId = result.requestId;
     console.log(`${colors.green}✅ Pelicargo Request ID: ${pelicargoRequestId}${colors.reset}`);
     
-    // Save initial cost record
+    // Save initial cost record (with dummy totalCost for pending status)
     const cost = await Cost.create({
       requestId: request._id,
       provider: 'Pelicargo',
       providerRequestId: pelicargoRequestId,
       rawRequest: request.shipment,
       status: 'pending',
+      costs: {
+        totalCost: 0,  // Required field, will update when quotes arrive
+        currency: 'USD'
+      },
       responseTimeMs: Date.now() - startTime
     });
 
