@@ -14,6 +14,9 @@ app.use(express.json());
 const userRoutes = require('./routes/users');
 app.use('/api/users', userRoutes);
 
+const partnerRoutes = require('./routes/partners');
+app.use('/api/partners', partnerRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ 
