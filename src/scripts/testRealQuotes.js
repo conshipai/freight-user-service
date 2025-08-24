@@ -180,8 +180,17 @@ async function testProvider(test) {
     // Create provider instance
     const provider = ProviderFactory.create(providerConfig.toObject());
     
+    // Generate request number
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const requestNumber = `REQ-${year}${month}${day}-${random}`;
+    
     // Create request record
     const request = await Request.create({
+      requestNumber: requestNumber,
       userId: new mongoose.Types.ObjectId(), // Dummy user ID for testing
       userEmail: 'test@example.com',
       company: 'Test Company',
@@ -196,26 +205,33 @@ async function testProvider(test) {
       console.log(`  ${colors.yellow}⏳ Pelicargo is async - submitting request...${colors.reset}`);
       
       try {
-        const pelicargoRequest = transformForPelicargo(request);
-        console.log(`  Sending to Pelicargo API...`);
+        console.log(`  Getting quote from Pelicargo (async)...`);
+        const result = await provider.getQuote(request);
         
-        const submitResult = await provider.submitQuoteRequest(pelicargoRequest);
-        
-        console.log(`  ${colors.green}✅ Request submitted successfully${colors.reset}`);
-        console.log(`  Pelicargo Request ID: ${submitResult.requestId}`);
-        console.log(`  Status: Will need to poll for results (async)`);
-        
-        // Save pending cost record
-        await Cost.create({
-          requestId: request._id,
-          provider: 'Pelicargo',
-          providerRequestId: submitResult.requestId,
-          rawRequest: pelicargoRequest,
-          status: 'pending'
-        });
+        if (result.requestId) {
+          console.log(`  ${colors.green}✅ Request submitted successfully${colors.reset}`);
+          console.log(`  Pelicargo Request ID: ${result.requestId}`);
+          console.log(`  Status: ${result.status} - Will need to poll for results`);
+          
+          // Save pending cost record
+          await Cost.create({
+            requestId: request._id,
+            provider: 'Pelicargo',
+            providerRequestId: result.requestId,
+            rawRequest: request.shipment,
+            rawResponse: result.rawResponse,
+            status: 'pending',
+            responseTimeMs: Date.now() - startTime
+          });
+        } else {
+          console.log(`  ${colors.yellow}⚠️ Unexpected response format${colors.reset}`);
+        }
         
       } catch (error) {
         console.log(`  ${colors.red}❌ Failed: ${error.message}${colors.reset}`);
+        if (error.response) {
+          console.log(`  Response data: ${JSON.stringify(error.response.data)}`);
+        }
       }
       
     } else {
@@ -242,7 +258,7 @@ async function testProvider(test) {
         });
         
         console.log(`  ${colors.green}✅ Quote received successfully${colors.reset}`);
-        console.log(`  Base Cost: $${result.costs.totalCost.toFixed(2)} ${result.costs.currency || 'USD'}`);
+        console.log(`  Base Cost: ${result.costs.totalCost.toFixed(2)} ${result.costs.currency || 'USD'}`);
         console.log(`  Service: ${result.service} - ${result.serviceType}`);
         console.log(`  Transit Time: ${result.transitTime}`);
         console.log(`  Response Time: ${cost.responseTimeMs}ms`);
@@ -250,13 +266,19 @@ async function testProvider(test) {
         // Show cost breakdown if available
         if (result.costs.freight || result.costs.fuel) {
           console.log(`  Breakdown:`);
-          if (result.costs.freight) console.log(`    - Freight: $${result.costs.freight.toFixed(2)}`);
-          if (result.costs.fuel) console.log(`    - Fuel: $${result.costs.fuel.toFixed(2)}`);
-          if (result.costs.accessorials) console.log(`    - Accessorials: $${result.costs.accessorials.toFixed(2)}`);
+          if (result.costs.freight) console.log(`    - Freight: ${result.costs.freight.toFixed(2)}`);
+          if (result.costs.fuel) console.log(`    - Fuel: ${result.costs.fuel.toFixed(2)}`);
+          if (result.costs.accessorials) console.log(`    - Accessorials: ${result.costs.accessorials.toFixed(2)}`);
         }
         
       } catch (error) {
         console.log(`  ${colors.red}❌ Failed to get quote: ${error.message}${colors.reset}`);
+        
+        // More detailed error info for debugging
+        if (error.response) {
+          console.log(`  HTTP Status: ${error.response.status}`);
+          console.log(`  Response: ${JSON.stringify(error.response.data).substring(0, 200)}`);
+        }
         
         // Save failed cost record
         await Cost.create({
@@ -278,26 +300,6 @@ async function testProvider(test) {
   } catch (error) {
     console.log(`  ${colors.red}❌ Test failed: ${error.message}${colors.reset}`);
   }
-}
-
-// Transform request for Pelicargo
-function transformForPelicargo(request) {
-  const shipment = request.shipment;
-  
-  return {
-    origin: { airport: shipment.origin.airport },
-    destination: { airport: shipment.destination.airport },
-    cargo: {
-      pieces: shipment.cargo.pieces.map(piece => ({
-        quantity: piece.quantity,
-        weight: piece.weightKg || piece.weight * 0.453592,
-        length: piece.lengthCm || piece.length * 2.54,
-        width: piece.widthCm || piece.width * 2.54,
-        height: piece.heightCm || piece.height * 2.54,
-        handling: piece.stackable === false ? ['NonStackable'] : []
-      }))
-    }
-  };
 }
 
 async function showSummary() {
