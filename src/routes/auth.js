@@ -94,11 +94,73 @@ router.post('/login', async (req, res) => {
 
 // Keep /test-token endpoint for backward compatibility with frontend
 router.post('/test-token', async (req, res) => {
-  return router.handle(req, res, () => {
-    // Forward to login endpoint
-    req.url = '/login';
-    router.handle(req, res);
-  });
+  try {
+    const { email, password } = req.body;
+    
+    console.log('Login attempt for:', email);
+    
+    if (!email || !password) {
+      return res.status(400).json({ 
+        error: 'Email and password are required' 
+      });
+    }
+    
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (!user) {
+      console.log('User not found:', email);
+      return res.status(401).json({ 
+        error: 'Invalid email or password' 
+      });
+    }
+    
+    if (!user.active) {
+      return res.status(403).json({ 
+        error: 'Account is suspended. Please contact administrator.' 
+      });
+    }
+    
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    
+    if (!isPasswordValid) {
+      console.log('Invalid password for user:', email);
+      return res.status(401).json({ 
+        error: 'Invalid email or password' 
+      });
+    }
+    
+    const token = jwt.sign(
+      { 
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        companyId: user.companyId
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    user.lastLogin = new Date();
+    await user.save();
+    
+    console.log('Login successful for:', email);
+    
+    const userObj = user.toObject();
+    delete userObj.password;
+    
+    // Match the expected response format
+    res.json({
+      token: token,
+      userId: user._id,
+      user: userObj
+    });
+    
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ 
+      error: 'An error occurred during login. Please try again.' 
+    });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────
