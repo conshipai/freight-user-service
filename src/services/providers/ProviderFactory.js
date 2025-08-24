@@ -1,5 +1,7 @@
+// src/services/providers/ProviderFactory.js
 const FreightForceProvider = require('./FreightForceProvider');
 const ECULinesProvider = require('./ECULinesProvider');
+const PelicargoProvider = require('./PelicargoProvider');
 const RateProvider = require('../../models/RateProvider');
 
 class ProviderFactory {
@@ -20,9 +22,8 @@ class ProviderFactory {
       case 'ECULINES':
         return new ECULinesProvider(config);
       
-      // Add more providers as needed
-      // case 'PELICARGO':
-      //   return new PelicargoProvider(config);
+      case 'PELICARGO':
+        return new PelicargoProvider(config);
       
       default:
         throw new Error(`Unknown provider: ${config.code}`);
