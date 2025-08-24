@@ -1,3 +1,4 @@
+// src/scripts/seedProviders.js
 require('dotenv').config();
 const mongoose = require('mongoose');
 const RateProvider = require('../models/RateProvider');
@@ -21,34 +22,6 @@ const providers = [
         active: true
       }
     ],
-    markupSettings: {
-      road: {
-        percentage: 30,
-        minimumMarkup: 40,
-        maximumMarkup: 3000,
-        flatFee: 0
-      }
-    },
-    additionalFees: [
-      {
-        name: 'Documentation Fee',
-        code: 'DOC',
-        amount: 35,
-        feeType: 'fixed',
-        serviceType: 'road',
-        mandatory: true,
-        active: true
-      },
-      {
-        name: 'Fuel Surcharge',
-        code: 'FSC',
-        amount: 5,
-        feeType: 'percentage',
-        serviceType: 'road',
-        mandatory: true,
-        active: true
-      }
-    ],
     priority: 10,
     status: 'active'
   },
@@ -57,6 +30,7 @@ const providers = [
     code: 'ECULINES',
     type: 'api',
     apiConfig: {
+      baseUrl: 'apim.ecuworldwide.com',
       apiKey: process.env.ECU_LINES_API_KEY,
       accountId: process.env.ECU_LINES_ACCOUNT_ID || '519222'
     },
@@ -67,35 +41,25 @@ const providers = [
         active: true
       }
     ],
-    markupSettings: {
-      ocean: {
-        percentage: 20,
-        minimumMarkup: 75,
-        maximumMarkup: 10000,
-        flatFee: 0
-      }
+    priority: 20,
+    status: 'active'
+  },
+  {
+    name: 'Pelicargo',
+    code: 'PELICARGO',
+    type: 'api',
+    apiConfig: {
+      baseUrl: process.env.PELICARGO_BASE_URL || 'https://staging-1-api.boardwalk.pelicargo.com/v3',
+      apiKey: process.env.PELICARGO_API_KEY
     },
-    additionalFees: [
+    services: [
       {
-        name: 'Documentation Fee',
-        code: 'DOC',
-        amount: 50,
-        feeType: 'fixed',
-        serviceType: 'ocean',
-        mandatory: true,
-        active: true
-      },
-      {
-        name: 'THC (Terminal Handling)',
-        code: 'THC',
-        amount: 150,
-        feeType: 'fixed',
-        serviceType: 'ocean',
-        mandatory: true,
+        mode: 'air',
+        serviceTypes: ['express', 'standard', 'economy'],
         active: true
       }
     ],
-    priority: 20,
+    priority: 5,
     status: 'active'
   }
 ];
@@ -109,12 +73,10 @@ async function seedProviders() {
       const existing = await RateProvider.findOne({ code: provider.code });
       
       if (existing) {
-        // Update existing
         Object.assign(existing, provider);
         await existing.save();
         console.log(`Updated provider: ${provider.name}`);
       } else {
-        // Create new
         await RateProvider.create(provider);
         console.log(`Created provider: ${provider.name}`);
       }
