@@ -163,4 +163,134 @@ async function processRatesWithMarkup(rates, shipment) {
     // Get additional fees for this service type
     const additionalFees = provider.additionalFees
       .filter(fee => 
-        fee.active &&
+        fee.active && 
+        (fee.serviceType === 'all' || fee.serviceType === shipment.mode)
+      )
+      .map(fee => ({
+        name: fee.name,
+        code: fee.code,
+        amount: fee.feeType === 'percentage' 
+          ? rate.costs.totalCost * (fee.amount / 100)
+          : fee.amount
+      }));
+    
+    const totalAdditionalFees = additionalFees.reduce((sum, fee) => sum + fee.amount, 0);
+    
+    // Calculate sell rates
+    const markupMultiplier = 1 + (markupAmount / rate.costs.totalCost);
+    const sellRates = {
+      freight: rate.costs.freight * markupMultiplier,
+      fuel: rate.costs.fuel * markupMultiplier,
+      security: rate.costs.security * markupMultiplier,
+      handling: rate.costs.handling * markupMultiplier,
+      documentation: rate.costs.documentation * markupMultiplier,
+      additionalFees: totalAdditionalFees,
+      totalSell: (rate.costs.totalCost + markupAmount + totalAdditionalFees)
+    };
+    
+    processedRates.push({
+      ...rate,
+      markup: {
+        percentage: provider.markupSettings[shipment.mode].percentage,
+        amount: markupAmount,
+        flatFee: provider.markupSettings[shipment.mode].flatFee || 0,
+        totalMarkup: markupAmount
+      },
+      additionalFees,
+      sellRates,
+      validUntil: new Date(Date.now() + provider.rateValidity * 60 * 60 * 1000)
+    });
+  }
+  
+  // Sort by total sell price
+  processedRates.sort((a, b) => a.sellRates.totalSell - b.sellRates.totalSell);
+  
+  return processedRates;
+}
+
+// Get quote by number
+router.get('/:quoteNumber', authorize(), async (req, res) => {
+  try {
+    const quote = await Quote.findOne({ quoteNumber: req.params.quoteNumber })
+      .populate('requestedBy', 'name email')
+      .populate('rates.providerId', 'name code');
+    
+    if (!quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
+    res.json({ success: true, quote });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Accept quote and book
+router.post('/:quoteNumber/accept', authorize(), async (req, res) => {
+  try {
+    const { selectedRateId } = req.body;
+    
+    const quote = await Quote.findOne({ quoteNumber: req.params.quoteNumber });
+    
+    if (!quote) {
+      return res.status(404).json({ error: 'Quote not found' });
+    }
+    
+    if (quote.status !== 'quoted') {
+      return res.status(400).json({ error: 'Quote is not in valid status for acceptance' });
+    }
+    
+    // Mark selected rate
+    const selectedRate = quote.rates.find(r => r._id.toString() === selectedRateId);
+    if (!selectedRate) {
+      return res.status(400).json({ error: 'Selected rate not found' });
+    }
+    
+    selectedRate.selected = true;
+    quote.selectedRate = selectedRateId;
+    quote.status = 'accepted';
+    
+    // Add to history
+    quote.history.push({
+      action: 'accepted',
+      user: req.user._id,
+      details: { selectedRateId }
+    });
+    
+    await quote.save();
+    
+    // TODO: Trigger booking process
+    
+    res.json({ 
+      success: true, 
+      message: 'Quote accepted successfully',
+      quote 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all quotes with filters
+router.get('/', authorize(), async (req, res) => {
+  try {
+    const { status, mode, origin, destination, limit = 50 } = req.query;
+    
+    const query = {};
+    if (status) query.status = status;
+    if (mode) query['shipment.mode'] = mode;
+    if (origin) query['shipment.origin.country'] = origin;
+    if (destination) query['shipment.destination.country'] = destination;
+    
+    const quotes = await Quote.find(query)
+      .limit(parseInt(limit))
+      .sort('-createdAt')
+      .select('quoteNumber status shipment.origin shipment.destination shipment.mode createdAt validUntil');
+    
+    res.json({ success: true, quotes });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+module.exports = router;
