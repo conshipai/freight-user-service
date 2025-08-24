@@ -4,6 +4,18 @@ const User = require('../models/User');
 const { authorize } = require('../middleware/authorize');
 const { PERMISSION_HIERARCHY } = require('../config/permissions');
 
+// ─────────────────────────────────────────────────────────────
+// Get current user (no password)
+// ─────────────────────────────────────────────────────────────
+router.get('/me', authorize(), async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Create user
 router.post('/', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
   try {
