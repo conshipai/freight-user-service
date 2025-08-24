@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const testRoutes = require('./routes/test');
 require('dotenv').config();
 
 const app = express();
@@ -21,6 +22,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/rate-providers', rateProviderRoutes);
 app.use('/api/quotes', quoteRoutes);
+app.use('/api/test', testRoutes);
 
 /* ---------- Simple endpoints ---------- */
 app.get('/health', (req, res) => {
