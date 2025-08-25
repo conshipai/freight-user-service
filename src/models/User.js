@@ -1,5 +1,5 @@
 // src/models/User.js
-const mongoose = require('mongoose');  // THIS WAS MISSING!
+const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -10,15 +10,15 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: [
       'system_admin',
-      'company_admin',
-      'company_user',
-      'customer',         // ✅ added for customer partners
-      'foreign_partner'   // ✅ added for foreign partner agents
+      'conship_employee',    // ✅ internal role
+      'conship_management',  // ✅ internal role
+      'customer',            // ✅ partner role
+      'foreign_partner'      // ✅ partner role
     ],
     required: true
   },
 
-  // Link a partner user to its Partner record (optional for internal users)
+  // Link a partner user to its Partner record (used only for partner users)
   partnerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Partner',
@@ -27,7 +27,8 @@ const userSchema = new mongoose.Schema({
 
   companyId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Company'
+    ref: 'Company',
+    required: false
   },
 
   // If this is a sub-user, who created them
@@ -36,7 +37,7 @@ const userSchema = new mongoose.Schema({
     ref: 'User'
   },
 
-  // Require new users to change password on first login (useful for auto-created partner users)
+  // Force password reset on first login (helpful for partner accounts)
   mustChangePassword: { type: Boolean, default: true },
 
   // Override company settings
