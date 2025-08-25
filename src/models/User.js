@@ -37,6 +37,25 @@ const userSchema = new mongoose.Schema({
     ref: 'User'
   },
 
+  // For sub-users (customer_user, partner_user) → points back to the parent account
+  parentAccountId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false
+  },
+
+  // Module access for this user
+  modules: [{
+    moduleId: String,
+    name: String,
+    permissions: [String],  // e.g. ['read', 'write', 'delete']
+    grantedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    grantedAt: { type: Date, default: Date.now }
+  }],
+
   // Force password reset on first login (helpful for partner accounts)
   mustChangePassword: { type: Boolean, default: true },
 
