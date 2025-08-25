@@ -1,6 +1,8 @@
+// src/config/permissions.js
+
 const PERMISSION_HIERARCHY = {
   system_admin: {
-    canManage: ['conship_employee', 'customer', 'foreign_partner'],
+    canManage: ['conship_employee', 'conship_management', 'customer', 'foreign_partner'],
     defaultModules: [
       { moduleId: 'quotes', name: 'Quotes & Pricing', permissions: ['read', 'write', 'delete', 'admin'] },
       { moduleId: 'tracking', name: 'Shipment Tracking', permissions: ['read', 'write', 'delete', 'admin'] },
@@ -11,6 +13,7 @@ const PERMISSION_HIERARCHY = {
     ],
     canAssignAnyModule: true
   },
+
   conship_employee: {
     canManage: [],
     defaultModules: [
@@ -20,6 +23,17 @@ const PERMISSION_HIERARCHY = {
     ],
     canAssignAnyModule: false
   },
+
+  conship_management: {
+    canManage: ['conship_employee'],
+    defaultModules: [
+      { moduleId: 'quotes', name: 'Quotes & Pricing', permissions: ['read', 'write', 'delete'] },
+      { moduleId: 'tracking', name: 'Shipment Tracking', permissions: ['read', 'write', 'delete'] },
+      { moduleId: 'analytics', name: 'Analytics & Reports', permissions: ['read', 'write'] }
+    ],
+    canAssignAnyModule: false
+  },
+
   customer: {
     canManage: ['customer_user'],
     defaultModules: [
@@ -28,6 +42,7 @@ const PERMISSION_HIERARCHY = {
     ],
     canCreateSubUsers: true
   },
+
   foreign_partner: {
     canManage: ['foreign_partner_user'],
     defaultModules: [
@@ -36,15 +51,22 @@ const PERMISSION_HIERARCHY = {
     ],
     canCreateSubUsers: true
   },
+
   customer_user: {
     canManage: [],
     defaultModules: [],
     inheritsFromParent: true
   },
+
   foreign_partner_user: {
     canManage: [],
     defaultModules: [],
     inheritsFromParent: true
+  },
+
+  partner_user: {
+    canManage: [],
+    defaultModules: [{ moduleId: 'quotes', name: 'Quotes & Pricing', permissions: ['read'] }]
   }
 };
 
