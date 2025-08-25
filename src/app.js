@@ -16,12 +16,14 @@ const authRoutes = require('./routes/auth');
 const companyRoutes = require('./routes/companies');
 const quoteRoutes = require('./routes/quotes');
 const costRoutes = require('./routes/costs');
+const partnerRoutes = require('./routes/partners');  // ADD THIS LINE
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/costs', costRoutes);
+app.use('/api/partners', partnerRoutes);  // ADD THIS LINE
 
 // Health check
 app.get('/health', (req, res) => {
