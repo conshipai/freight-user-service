@@ -15,6 +15,14 @@ const partnerSchema = new mongoose.Schema({
     uppercase: true, // e.g., 'DHL', 'KWE', 'CEVA'
     trim: true
   },
+  
+  // NEW: Partner Type
+  type: {
+    type: String,
+    enum: ['customer', 'foreign_partner'],
+    required: true
+  },
+  
   country: {
     type: String,
     required: true
@@ -44,23 +52,36 @@ const partnerSchema = new mongoose.Schema({
     default: 'pending'
   },
   
-  // Markup Settings - Based on THIS partner's rates
-  markupSettings: {
-    air: {
-      percentage: { type: Number, default: 25 }, // 25%
-      minimumFee: { type: Number, default: 50 }  // $50 minimum
-    },
-    ocean: {
-      percentage: { type: Number, default: 20 },
-      minimumFee: { type: Number, default: 75 }
-    },
-    road: {
-      percentage: { type: Number, default: 30 },
-      minimumFee: { type: Number, default: 40 }
-    }
+  // NEW: API Markup Settings (replaces old markupSettings)
+  apiMarkups: {
+    pelicargo: { type: Number, default: 15 },
+    freightForce: { type: Number, default: 18 },
+    ecuLines: { type: Number, default: 20 }
   },
   
-  // Additional Fees by Service Type
+  // NEW: Mode-specific Charges
+  modeCharges: {
+    air: [{
+      name: String,
+      amount: Number
+    }],
+    ocean: [{
+      name: String,
+      amount: Number
+    }],
+    ground: [{
+      name: String,
+      amount: Number
+    }]
+  },
+  
+  // NEW: Modules the partner has access to
+  modules: [{
+    type: String,
+    default: ['Pricing Portal']
+  }],
+  
+  // Additional Fees (keeping this from original)
   additionalFees: [{
     name: String,        // e.g., "AWB Fee", "Documentation"
     amount: Number,      // e.g., 35
@@ -124,10 +145,6 @@ const partnerSchema = new mongoose.Schema({
     ref: 'User'
   },
   approvedAt: Date,
-  invitedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
   notes: String,
   
 }, {
@@ -138,5 +155,6 @@ const partnerSchema = new mongoose.Schema({
 partnerSchema.index({ companyCode: 1 });
 partnerSchema.index({ country: 1 });
 partnerSchema.index({ status: 1 });
+partnerSchema.index({ type: 1 }); // NEW index for partner type
 
 module.exports = mongoose.model('Partner', partnerSchema);
