@@ -1,404 +1,160 @@
-const express = require('express');
-const router = express.Router();
-const crypto = require('crypto');
-const Partner = require('../models/Partner');
-const PartnerContact = require('../models/PartnerContact');
-const PartnerInvite = require('../models/PartnerInvite');
-const { authorize } = require('../middleware/authorize');
+const mongoose = require('mongoose');
 
-// For email sending (we'll implement this next)
-const { sendInviteEmail, sendMagicLinkEmail } = require('../services/emailService');
-
-// ─────────────────────────────────────────────────────────────
-// ADMIN ROUTES - Invite and Manage Partners
-// ─────────────────────────────────────────────────────────────
-
-// Send invite to new partner
-router.post('/invite', authorize(['system_admin']), async (req, res) => {
-  try {
-    const { email, companyName, country, contactName, notes } = req.body;
-    
-    // Check if partner already exists
-    const existingPartner = await Partner.findOne({ email });
-    if (existingPartner) {
-      return res.status(400).json({ error: 'Partner already exists' });
-    }
-    
-    // Check if invite already sent
-    const existingInvite = await PartnerInvite.findOne({ 
-      email, 
-      status: 'pending' 
-    });
-    if (existingInvite) {
-      return res.status(400).json({ error: 'Invite already sent to this email' });
-    }
-    
-    // Generate unique token
-    const token = crypto.randomBytes(32).toString('hex');
-    
-    // Create invite record
-    const invite = new PartnerInvite({
-      email,
-      companyName,
-      country,
-      invitedBy: req.user._id,
-      token,
-      preFillData: {
-        contactName,
-        notes
-      }
-    });
-    
-    await invite.save();
-    
-    // Send invite email
-    await sendInviteEmail(email, companyName, token);
-    
-    res.json({ 
-      success: true, 
-      message: 'Invite sent successfully',
-      invite: {
-        id: invite._id,
-        email: invite.email,
-        companyName: invite.companyName
-      }
-    });
-  } catch (error) {
-    console.error('Invite error:', error);
-    res.status(500).json({ error: error.message });
-  }
+const partnerSchema = new mongoose.Schema({
+  // Basic Information
+  companyName: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  companyCode: {
+    type: String,
+    required: true,
+    unique: true,
+    uppercase: true, // e.g., 'DHL', 'KWE', 'CEVA'
+    trim: true
+  },
+  
+  // NEW: Partner Type
+  type: {
+    type: String,
+    enum: ['customer', 'foreign_partner'],
+    required: true
+  },
+  
+  country: {
+    type: String,
+    required: true
+  },
+  address: {
+    street: String,
+    city: String,
+    state: String,
+    postalCode: String,
+    country: String
+  },
+  phone: {
+    type: String,
+    required: true
+  },
+  email: {
+    type: String,
+    required: true,
+    lowercase: true
+  },
+  taxVatNumber: String,
+  
+  // Status
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'suspended', 'inactive'],
+    default: 'pending'
+  },
+  
+  // NEW: API Markup Settings (replaces old markupSettings)
+  apiMarkups: {
+    pelicargo: { type: Number, default: 15 },
+    freightForce: { type: Number, default: 18 },
+    ecuLines: { type: Number, default: 20 }
+  },
+  
+  // NEW: Mode-specific Charges
+  modeCharges: {
+    air: [{
+      name: String,
+      amount: Number
+    }],
+    ocean: [{
+      name: String,
+      amount: Number
+    }],
+    ground: [{
+      name: String,
+      amount: Number
+    }]
+  },
+  
+  // NEW: Modules the partner has access to
+  modules: [{
+    type: String,
+    default: ['Pricing Portal']
+  }],
+  
+  // Additional Fees (keeping this from original)
+  additionalFees: [{
+    name: String,        // e.g., "AWB Fee", "Documentation"
+    amount: Number,      // e.g., 35
+    serviceType: {
+      type: String,
+      enum: ['air', 'ocean', 'road', 'all']
+    },
+    feeType: {
+      type: String,
+      enum: ['fixed', 'percentage'],
+      default: 'fixed'
+    },
+    active: { type: Boolean, default: true }
+  }],
+  
+  // KYC/Compliance
+  kycStatus: {
+    type: String,
+    enum: ['pending', 'verified', 'rejected'],
+    default: 'pending'
+  },
+  kycDocuments: [{
+    documentType: String, // 'business_license', 'tax_certificate', etc.
+    fileName: String,
+    uploadedAt: Date,
+    verifiedAt: Date
+  }],
+  
+  // Finance Information
+  paymentTerms: {
+    type: String,
+    default: 'NET30'
+  },
+  currency: {
+    type: String,
+    default: 'USD'
+  },
+  bankDetails: {
+    bankName: String,
+    accountNumber: String,
+    routingNumber: String,
+    swiftCode: String,
+    iban: String
+  },
+  
+  // Operational Details
+  operatingHours: {
+    timezone: String,
+    monday: { open: String, close: String },
+    tuesday: { open: String, close: String },
+    wednesday: { open: String, close: String },
+    thursday: { open: String, close: String },
+    friday: { open: String, close: String },
+    saturday: { open: String, close: String },
+    sunday: { open: String, close: String }
+  },
+  
+  // Metadata
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  approvedAt: Date,
+  notes: String,
+  
+}, {
+  timestamps: true
 });
 
-// Get all partners (admin view)
-router.get('/', authorize(['system_admin']), async (req, res) => {
-  try {
-    const { status, country } = req.query;
-    
-    const query = {};
-    if (status) query.status = status;
-    if (country) query.country = country;
-    
-    const partners = await Partner.find(query)
-      .populate('approvedBy', 'name email')
-      .sort('-createdAt');
-    
-    res.json({ success: true, partners });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// Indexes for better query performance
+partnerSchema.index({ companyCode: 1 });
+partnerSchema.index({ country: 1 });
+partnerSchema.index({ status: 1 });
+partnerSchema.index({ type: 1 }); // NEW index for partner type
 
-// Get partner details
-router.get('/:id', authorize(['system_admin']), async (req, res) => {
-  try {
-    const partner = await Partner.findById(req.params.id)
-      .populate('approvedBy', 'name email');
-    
-    if (!partner) {
-      return res.status(404).json({ error: 'Partner not found' });
-    }
-    
-    // Get contacts for this partner
-    const contacts = await PartnerContact.find({ partnerId: partner._id });
-    
-    res.json({ 
-      success: true, 
-      partner,
-      contacts 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Approve partner
-router.put('/:id/approve', authorize(['system_admin']), async (req, res) => {
-  try {
-    const partner = await Partner.findById(req.params.id);
-    
-    if (!partner) {
-      return res.status(404).json({ error: 'Partner not found' });
-    }
-    
-    partner.status = 'approved';
-    partner.approvedBy = req.user._id;
-    partner.approvedAt = new Date();
-    
-    await partner.save();
-    
-    // TODO: Send approval email to partner
-    
-    res.json({ 
-      success: true, 
-      message: 'Partner approved successfully',
-      partner 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Update partner markup settings
-router.put('/:id/markup', authorize(['system_admin']), async (req, res) => {
-  try {
-    const { markupSettings, additionalFees } = req.body;
-    
-    const partner = await Partner.findById(req.params.id);
-    if (!partner) {
-      return res.status(404).json({ error: 'Partner not found' });
-    }
-    
-    if (markupSettings) {
-      partner.markupSettings = { ...partner.markupSettings, ...markupSettings };
-    }
-    
-    if (additionalFees) {
-      partner.additionalFees = additionalFees;
-    }
-    
-    await partner.save();
-    
-    res.json({ 
-      success: true, 
-      message: 'Markup settings updated',
-      partner 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
-// PUBLIC ROUTES - Partner Registration
-// ─────────────────────────────────────────────────────────────
-
-// Verify invite token and get pre-filled data
-router.get('/register/verify/:token', async (req, res) => {
-  try {
-    const invite = await PartnerInvite.findOne({ 
-      token: req.params.token,
-      status: 'pending'
-    });
-    
-    if (!invite) {
-      return res.status(400).json({ error: 'Invalid or expired invite' });
-    }
-    
-    if (invite.tokenExpiry < new Date()) {
-      invite.status = 'expired';
-      await invite.save();
-      return res.status(400).json({ error: 'Invite has expired' });
-    }
-    
-    res.json({ 
-      success: true,
-      invite: {
-        email: invite.email,
-        companyName: invite.companyName,
-        country: invite.country,
-        preFillData: invite.preFillData
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Complete partner registration
-router.post('/register/complete', async (req, res) => {
-  try {
-    const { 
-      token,
-      companyData,
-      contactData 
-    } = req.body;
-    
-    // Verify token
-    const invite = await PartnerInvite.findOne({ 
-      token,
-      status: 'pending'
-    });
-    
-    if (!invite) {
-      return res.status(400).json({ error: 'Invalid registration token' });
-    }
-    
-    // Create partner
-    const partner = new Partner({
-      ...companyData,
-      email: invite.email,
-      invitedBy: invite.invitedBy,
-      status: 'pending' // Needs admin approval
-    });
-    
-    await partner.save();
-    
-    // Create primary contact
-    const contact = new PartnerContact({
-      partnerId: partner._id,
-      ...contactData,
-      contactType: 'primary',
-      hasPortalAccess: true,
-      portalRole: 'admin'
-    });
-    
-    await contact.save();
-    
-    // Mark invite as completed
-    invite.status = 'completed';
-    invite.completedAt = new Date();
-    await invite.save();
-    
-    res.json({ 
-      success: true,
-      message: 'Registration completed. Awaiting approval.',
-      partnerId: partner._id
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
-// PARTNER PORTAL ROUTES - Magic Link Auth
-// ─────────────────────────────────────────────────────────────
-
-// Request magic link
-router.post('/auth/magic-link', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    // Find contact with portal access
-    const contact = await PartnerContact.findOne({ 
-      email,
-      hasPortalAccess: true,
-      active: true
-    });
-    
-    if (!contact) {
-      // Don't reveal if email exists or not
-      return res.json({ 
-        success: true,
-        message: 'If this email is registered, you will receive a login link.'
-      });
-    }
-    
-    // Check if partner is approved
-    const partner = await Partner.findById(contact.partnerId);
-    if (partner.status !== 'approved') {
-      return res.status(403).json({ error: 'Partner account not yet approved' });
-    }
-    
-    // Generate magic link token
-    const token = crypto.randomBytes(32).toString('hex');
-    contact.magicLinkToken = token;
-    contact.magicLinkExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-    
-    await contact.save();
-    
-    // Send magic link email
-    await sendMagicLinkEmail(email, token, contact.name);
-    
-    res.json({ 
-      success: true,
-      message: 'Login link sent to your email'
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Verify magic link and create session
-router.get('/auth/verify/:token', async (req, res) => {
-  try {
-    const contact = await PartnerContact.findOne({
-      magicLinkToken: req.params.token,
-      magicLinkExpiry: { $gt: new Date() }
-    }).populate('partnerId');
-    
-    if (!contact) {
-      return res.status(400).json({ error: 'Invalid or expired link' });
-    }
-    
-    // Clear the token
-    contact.magicLinkToken = null;
-    contact.magicLinkExpiry = null;
-    contact.lastLogin = new Date();
-    await contact.save();
-    
-    // Create a session token (you might want to use JWT here)
-    const jwt = require('jsonwebtoken');
-    const sessionToken = jwt.sign(
-      { 
-        contactId: contact._id,
-        partnerId: contact.partnerId._id,
-        email: contact.email,
-        role: contact.portalRole
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
-    );
-    
-    res.json({
-      success: true,
-      token: sessionToken,
-      contact: {
-        id: contact._id,
-        name: contact.name,
-        email: contact.email,
-        role: contact.portalRole
-      },
-      partner: {
-        id: contact.partnerId._id,
-        companyName: contact.partnerId.companyName,
-        status: contact.partnerId.status
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────
-// PARTNER CONTACT MANAGEMENT
-// ─────────────────────────────────────────────────────────────
-
-// Add contact for partner
-router.post('/:partnerId/contacts', authorize(['system_admin']), async (req, res) => {
-  try {
-    const partner = await Partner.findById(req.params.partnerId);
-    if (!partner) {
-      return res.status(404).json({ error: 'Partner not found' });
-    }
-    
-    const contact = new PartnerContact({
-      partnerId: partner._id,
-      ...req.body
-    });
-    
-    await contact.save();
-    
-    res.json({ 
-      success: true,
-      message: 'Contact added successfully',
-      contact 
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get contacts for partner
-router.get('/:partnerId/contacts', authorize(['system_admin']), async (req, res) => {
-  try {
-    const contacts = await PartnerContact.find({ 
-      partnerId: req.params.partnerId 
-    });
-    
-    res.json({ success: true, contacts });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-module.exports = router;
+module.exports = mongoose.model('Partner', partnerSchema);
