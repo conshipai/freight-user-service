@@ -277,6 +277,46 @@ router.delete('/:id', authorize(['system_admin']), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// Reset partner password (admin only)
+// ─────────────────────────────────────────────────────────────
+router.post('/:id/reset-password', authorize(['system_admin']), async (req, res) => {
+  try {
+    const partner = await Partner.findById(req.params.id);
+    
+    if (!partner) {
+      return res.status(404).json({ error: 'Partner not found' });
+    }
+    
+    // Find the user account for this partner
+    const user = await User.findOne({ email: partner.email });
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found for this partner' });
+    }
+    
+    // Generate new password
+    const newPassword = req.body.password || crypto.randomBytes(8).toString('hex');
+    
+    // Hash and save the new password
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.mustChangePassword = true; // Force them to change on next login
+    await user.save();
+    
+    // Log the password so you can share it with the partner
+    console.log(`Password reset for ${partner.email}: ${newPassword}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Password reset successfully',
+      tempPassword: newPassword // Return it so you can display in frontend
+    });
+  } catch (error) {
+    console.error('Password reset error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // PARTNER PORTAL ROUTES - Magic Link Auth
 // ─────────────────────────────────────────────────────────────
 
