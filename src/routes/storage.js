@@ -19,48 +19,46 @@ const upload = multer({
   }
 });
 
-// R2 (S3-compatible) client
-const r2 = new S3Client({
-  region: process.env.R2_REGION || 'auto',
-  endpoint:
-    process.env.R2_ENDPOINT ||
-    (process.env.R2_ACCOUNT_ID
-      ? `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
-      : undefined),
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
-  }
+const forcePath = /^(1|true|yes)$/i.test(process.env.S3_FORCE_PATH_STYLE || '');
+const credentials = (process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY)
+  ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY }
+  : undefined;
+
+// S3-compatible client (works with AWS S3, MinIO, R2 (with S3_* vars), etc.)
+const s3 = new S3Client({
+  region: process.env.S3_REGION || 'us-east-1',
+  endpoint: process.env.S3_ENDPOINT || undefined, // e.g. https://minio.example.com
+  forcePathStyle: forcePath, // needed for many S3-compatible providers
+  credentials
 });
 
-// Small helper to keep path segments clean
+// Helpers
 const safe = (s, def = '') => String(s ?? def).replace(/[^A-Za-z0-9._-]/g, '_');
+const BUCKET = process.env.S3_BUCKET;
 
-// Optional health check
+// Optional health
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Upload route
+// Upload
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'No file provided' });
+    if (!BUCKET) return res.status(500).json({ success: false, error: 'S3_BUCKET not set' });
 
     const { requestId, documentType } = req.body || {};
     if (!requestId || !documentType) {
       return res.status(400).json({ success: false, error: 'requestId and documentType are required' });
     }
 
-    const Bucket = process.env.R2_BUCKET;
-    if (!Bucket) return res.status(500).json({ success: false, error: 'R2_BUCKET not set' });
-
     const rid = safe(requestId);
     const dtype = safe(documentType);
     const original = safe(req.file.originalname || 'upload');
 
-    // Key format: <requestId>/<documentType>/<ts>-<original>
+    // Key: <requestId>/<documentType>/<ts>-<original>
     const Key = `${rid}/${dtype}/${Date.now()}-${original}`;
 
-    await r2.send(new PutObjectCommand({
-      Bucket,
+    await s3.send(new PutObjectCommand({
+      Bucket: BUCKET,
       Key,
       Body: req.file.buffer,
       ContentType: req.file.mimetype,
@@ -72,18 +70,19 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       }
     }));
 
-    // Prefer a public base (CDN/custom domain). Else fall back to presigned download.
-    const publicBase = (process.env.R2_PUBLIC_BASE || '').replace(/\/$/, '');
+    // Prefer a public base (CDN/custom domain). Else return a 1-hour presigned URL.
+    const publicBase = (process.env.S3_PUBLIC_BASE || '').replace(/\/$/, '');
     const encodedKey = encodeURIComponent(Key).replace(/%2F/g, '/');
 
     let fileUrl;
     if (publicBase) {
+      // S3_PUBLIC_BASE should already include bucket if your host requires it (path-style),
+      // e.g. https://minio.example.com/mybucket  or  https://cdn.example.com
       fileUrl = `${publicBase}/${encodedKey}`;
     } else {
-      // one-hour presigned URL
       fileUrl = await getSignedUrl(
-        r2,
-        new GetObjectCommand({ Bucket, Key }),
+        s3,
+        new GetObjectCommand({ Bucket: BUCKET, Key }),
         { expiresIn: 3600 }
       );
     }
@@ -107,19 +106,16 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// On-demand signed URL (if you need it)
+// On-demand signed URL
 router.get('/signed-url/*', async (req, res) => {
   try {
+    if (!BUCKET) return res.status(500).json({ success: false, error: 'S3_BUCKET not set' });
     const Key = decodeURIComponent(req.params[0] || '');
-    const Bucket = process.env.R2_BUCKET;
-    if (!Bucket) return res.status(500).json({ success: false, error: 'R2_BUCKET not set' });
-
     const url = await getSignedUrl(
-      r2,
-      new GetObjectCommand({ Bucket, Key }),
+      s3,
+      new GetObjectCommand({ Bucket: BUCKET, Key }),
       { expiresIn: 3600 }
     );
-
     res.json({ success: true, url });
   } catch (err) {
     console.error('Signed URL error:', err);
