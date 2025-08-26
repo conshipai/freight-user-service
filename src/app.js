@@ -21,6 +21,10 @@ const costRoutes = require('./routes/costs');
 const partnerRoutes = require('./routes/partners');
 const airportRoutes = require('./routes/airports');
 
+// ✅ NEW: sequences & storage
+const sequenceRoutes = require('./routes/sequences');
+const storageRoutes = require('./routes/storage');
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/companies', companyRoutes);
@@ -28,6 +32,10 @@ app.use('/api/quotes', quoteRoutes);
 app.use('/api/costs', costRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/airports', airportRoutes);
+
+// ✅ NEW: mount sequences & storage
+app.use('/api/sequences', sequenceRoutes);
+app.use('/api/storage', storageRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -49,8 +57,12 @@ app.get('/', (req, res) => {
       users: '/api/users',
       companies: '/api/companies',
       quotes: '/api/quotes',
+      costs: '/api/costs',
       partners: '/api/partners',
-      airports: '/api/airports'
+      airports: '/api/airports',
+      // ✅ NEW
+      sequences: '/api/sequences',
+      storage: '/api/storage'
     }
   });
 });
