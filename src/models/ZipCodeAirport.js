@@ -5,45 +5,41 @@ const zipCodeAirportSchema = new mongoose.Schema({
   zipCode: {
     type: String,
     required: true,
-    trim: true,
-    minLength: 5,
-    maxLength: 5,
     index: true
   },
   airportCode: {
     type: String,
     required: true,
-    uppercase: true,
-    trim: true,
-    minLength: 3,
-    maxLength: 3
+    uppercase: true
   },
-  city: {
+  city: String,
+  state: String,
+  deliveryZone: {
     type: String,
-    required: true
-  },
-  state: {
-    type: String,
-    required: true,
     uppercase: true,
-    minLength: 2,
-    maxLength: 2
+    default: 'E'
   },
-  distance: {
-    type: Number,  // Distance in miles from ZIP to airport
-    default: 0
-  },
+  distance: Number, // Optional: miles from ZIP to airport
   isActive: {
     type: Boolean,
     default: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  collection: 'zipcodeairports' // Explicitly set collection name
 });
 
-// Create compound index for unique ZIP-Airport combinations
-zipCodeAirportSchema.index({ zipCode: 1, airportCode: 1 }, { unique: true });
-zipCodeAirportSchema.index({ airportCode: 1 });
-zipCodeAirportSchema.index({ state: 1 });
+// Add index for faster lookups
+zipCodeAirportSchema.index({ zipCode: 1, deliveryZone: 1 });
+
+// Method to find the best airport for a ZIP (closest delivery zone)
+zipCodeAirportSchema.statics.findBestAirport = async function(zipCode) {
+  const airports = await this.find({ 
+    zipCode: zipCode,
+    isActive: true 
+  }).sort({ deliveryZone: 1 }); // A comes before B, B before C, etc.
+  
+  return airports.length > 0 ? airports[0] : null;
+};
 
 module.exports = mongoose.model('ZipCodeAirport', zipCodeAirportSchema);
