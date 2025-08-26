@@ -331,8 +331,8 @@ const searchAirports = async (req, res) => {
         ]
       };
       
-      console.log('Searching foreign_gateways with:', searchQuery);
-      airports = await db.collection('foreign_gateways')
+      console.log('Searching international_airports with:', searchQuery);
+      airports = await db.collection('international_airports')
         .find(searchQuery)
         .limit(20)
         .toArray();
@@ -347,7 +347,7 @@ const searchAirports = async (req, res) => {
             { city: { $regex: q, $options: 'i' } }
           ]
         }).limit(10).toArray(),
-        db.collection('foreign_gateways').find({
+        db.collection('international_airports').find({
           active: true,
           $or: [
             { code: { $regex: q.toUpperCase(), $options: 'i' } },
