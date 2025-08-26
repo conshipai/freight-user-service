@@ -55,6 +55,36 @@ app.get('/', (req, res) => {
   });
 });
 
+// 🔎 Test airport search directly (debug)
+app.get('/api/test/airports', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+
+    // Test direct queries
+    const usTest = await db.collection('us_gateways').findOne({ code: 'JFK' });
+    const foreignTest = await db.collection('foreign_gateways').findOne({ code: 'LHR' });
+
+    // Test search
+    const searchTest = await db.collection('foreign_gateways').find({
+      $or: [
+        { code: { $regex: 'LH', $options: 'i' } },
+        { name: { $regex: 'LH', $options: 'i' } },
+        { city: { $regex: 'LH', $options: 'i' } }
+      ]
+    }).limit(5).toArray();
+
+    res.json({
+      collections: await db.listCollections().toArray().then(cols => cols.map(c => c.name)),
+      us_sample: usTest,
+      foreign_sample: foreignTest,
+      search_results: searchTest,
+      search_count: searchTest.length
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -83,6 +113,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/freight',
     console.log(`🚀 Server is running on port ${PORT}`);
     console.log(`📡 API available at http://localhost:${PORT}`);
     console.log(`🏥 Health check at http://localhost:${PORT}/health`);
+    console.log(`🧪 Debug airport test at http://localhost:${PORT}/api/test/airports`);
   });
 })
 .catch(err => {
