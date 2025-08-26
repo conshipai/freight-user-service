@@ -288,7 +288,7 @@ const searchAirports = async (req, res) => {
   try {
     const { q, type } = req.query;
 
-    console.log('Airport search:', { query: q, type }); // Debug log
+    console.log('Airport search:', { query: q, type });
     
     if (!q || q.length < 2) {
       return res.status(400).json({ 
@@ -296,48 +296,75 @@ const searchAirports = async (req, res) => {
         error: 'Search query must be at least 2 characters' 
       });
     }
-    
+
     const db = mongoose.connection.db;
-    
-    // Build the search query
-    const searchQuery = {
-      active: true,
-      $or: [
-        { code: { $regex: q.toUpperCase(), $options: 'i' } },  // Force uppercase for codes
-        { name: { $regex: q, $options: 'i' } },
-        { city: { $regex: q, $options: 'i' } }
-      ]
-    };
-    
     let airports = [];
-    
+
     if (type === 'domestic') {
+      // US airports typically have city — search code, name, city
+      const searchQuery = {
+        active: true,
+        $or: [
+          { code: { $regex: q.toUpperCase(), $options: 'i' } },
+          { name: { $regex: q, $options: 'i' } },
+          { city: { $regex: q, $options: 'i' } }
+        ]
+      };
+
       console.log('Searching us_gateways with:', searchQuery);
       airports = await db.collection('us_gateways')
         .find(searchQuery)
         .limit(20)
         .toArray();
+
     } else if (type === 'international') {
+      // Foreign airports may not have city — search code, name, country
+      const searchQuery = {
+        active: true,
+        $or: [
+          { code: { $regex: q.toUpperCase(), $options: 'i' } },
+          { name: { $regex: q, $options: 'i' } },
+          { country: { $regex: q, $options: 'i' } }
+        ]
+      };
+
       console.log('Searching foreign_gateways with:', searchQuery);
       airports = await db.collection('foreign_gateways')
         .find(searchQuery)
         .limit(20)
         .toArray();
+
     } else {
-      // Search both
+      // No type passed: search both with field-appropriate queries
+      const domesticQuery = {
+        active: true,
+        $or: [
+          { code: { $regex: q.toUpperCase(), $options: 'i' } },
+          { name: { $regex: q, $options: 'i' } },
+          { city: { $regex: q, $options: 'i' } }
+        ]
+      };
+
+      const internationalQuery = {
+        active: true,
+        $or: [
+          { code: { $regex: q.toUpperCase(), $options: 'i' } },
+          { name: { $regex: q, $options: 'i' } },
+          { country: { $regex: q, $options: 'i' } }
+        ]
+      };
+
       const [us, foreign] = await Promise.all([
-        db.collection('us_gateways').find(searchQuery).limit(10).toArray(),
-        db.collection('foreign_gateways').find(searchQuery).limit(10).toArray()
+        db.collection('us_gateways').find(domesticQuery).limit(10).toArray(),
+        db.collection('foreign_gateways').find(internationalQuery).limit(10).toArray()
       ]);
+
       airports = [...us, ...foreign];
     }
-    
+
     console.log(`Found ${airports.length} airports for query: ${q}, type: ${type}`);
-    
-    res.json({ 
-      success: true,
-      airports 
-    });
+    res.json({ success: true, airports });
+
   } catch (error) {
     console.error('Error searching airports:', error);
     res.status(500).json({ 
