@@ -19,27 +19,25 @@ const zipCodeAirportSchema = new mongoose.Schema({
     uppercase: true,
     default: 'E'
   },
-  distance: Number, // Optional: miles from ZIP to airport
   isActive: {
     type: Boolean,
     default: true
   }
 }, {
   timestamps: true,
-  collection: 'zipcodeairports' // Explicitly set collection name
+  collection: 'zipcodeairports' // Explicitly use your collection name
 });
 
-// Add index for faster lookups
-zipCodeAirportSchema.index({ zipCode: 1, deliveryZone: 1 });
-
-// Method to find the best airport for a ZIP (closest delivery zone)
+// Static method to find the best airport (closest delivery zone)
 zipCodeAirportSchema.statics.findBestAirport = async function(zipCode) {
   const airports = await this.find({ 
     zipCode: zipCode,
     isActive: true 
-  }).sort({ deliveryZone: 1 }); // A comes before B, B before C, etc.
+  }).sort({ deliveryZone: 1 }).limit(1); // A is better than B, B better than C
   
   return airports.length > 0 ? airports[0] : null;
 };
 
-module.exports = mongoose.model('ZipCodeAirport', zipCodeAirportSchema);
+const ZipCodeAirport = mongoose.model('ZipCodeAirport', zipCodeAirportSchema);
+
+module.exports = ZipCodeAirport;
