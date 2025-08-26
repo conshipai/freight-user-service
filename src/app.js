@@ -62,10 +62,10 @@ app.get('/api/test/airports', async (req, res) => {
 
     // Test direct queries
     const usTest = await db.collection('us_gateways').findOne({ code: 'JFK' });
-    const foreignTest = await db.collection('foreign_gateways').findOne({ code: 'LHR' });
+    const foreignTest = await db.collection('international_airports').findOne({ code: 'LHR' });
 
     // Test search
-    const searchTest = await db.collection('foreign_gateways').find({
+    const searchTest = await db.collection('international_airports').find({
       $or: [
         { code: { $regex: 'LH', $options: 'i' } },
         { name: { $regex: 'LH', $options: 'i' } },
