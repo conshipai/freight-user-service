@@ -10,13 +10,13 @@ class AirportModel {
     if (query.country === 'US' || query.type === 'domestic') {
       return await db.collection('us_gateways').findOne(query);
     } else if (query.country && query.country !== 'US' || query.type === 'foreign') {
-      return await db.collection('foreign_gateways').findOne(query);
+      return await db.collection('international_airports').findOne(query);
     }
     
     // Try both collections
     let result = await db.collection('us_gateways').findOne(query);
     if (!result) {
-      result = await db.collection('foreign_gateways').findOne(query);
+      result = await db.collection('international_airports').findOne(query);
     }
     return result;
   }
@@ -28,12 +28,12 @@ class AirportModel {
     if (query.country === 'US' || query.type === 'domestic') {
       cursor = db.collection('us_gateways').find(query);
     } else if ((query.country && query.country.$ne === 'US') || query.type === 'foreign') {
-      cursor = db.collection('foreign_gateways').find(query);
+      cursor = db.collection('international_airports').find(query);
     } else {
       // Query both collections
       const [domestic, foreign] = await Promise.all([
         db.collection('us_gateways').find(query).toArray(),
-        db.collection('foreign_gateways').find(query).toArray()
+        db.collection('international_airports').find(query).toArray()
       ]);
       return [...domestic, ...foreign];
     }
