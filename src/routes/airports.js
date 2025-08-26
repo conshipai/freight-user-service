@@ -3,15 +3,22 @@ const express = require('express');
 const router = express.Router();
 const airportController = require('../controllers/airportController');
 
-// NEW ROUTE - Add this line
+// Validate airport pair (origin domestic, destination international)
+router.post('/validate', airportController.validateAirportPair);
+
+// Search airports (for autocomplete)
+router.get('/search', airportController.searchAirports);
+
+// Get airports by codes
 router.get('/by-codes', airportController.getAirportsByCodes);
 
-// POST /api/airports/nearest-airport - Find nearest airport for ZIP code
+// Find nearest airport for ZIP code
 router.post('/nearest-airport', airportController.getNearestAirport);
 
-// Other routes...
+// Get domestic airports (US only)
 router.get('/domestic', airportController.getDomesticAirports);
+
+// Get international airports (non-US)
 router.get('/international', airportController.getInternationalAirports);
-// ... etc
 
 module.exports = router;
