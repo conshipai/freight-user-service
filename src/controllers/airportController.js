@@ -1,4 +1,5 @@
 // src/controllers/airportController.js
+const mongoose = require('mongoose'); // <-- needed for direct db access
 const Airport = require('../models/Airport');
 const ZipCodeAirport = require('../models/ZipCodeAirport');
 
@@ -282,10 +283,12 @@ const getInternationalAirports = async (req, res) => {
   }
 };
 
-// Search airports by text (for autocomplete)
+// Search airports by text (for autocomplete) — UPDATED
 const searchAirports = async (req, res) => {
   try {
     const { q, type } = req.query;
+
+    console.log('Airport search:', { query: q, type }); // Debug log
     
     if (!q || q.length < 2) {
       return res.status(400).json({ 
@@ -294,27 +297,42 @@ const searchAirports = async (req, res) => {
       });
     }
     
-    const searchRegex = new RegExp(q, 'i');
-    const query = {
+    const db = mongoose.connection.db;
+    
+    // Build the search query
+    const searchQuery = {
       active: true,
       $or: [
-        { code: searchRegex },
-        { name: searchRegex },
-        { city: searchRegex }
+        { code: { $regex: q.toUpperCase(), $options: 'i' } },  // Force uppercase for codes
+        { name: { $regex: q, $options: 'i' } },
+        { city: { $regex: q, $options: 'i' } }
       ]
     };
     
-    // Add type filter
+    let airports = [];
+    
     if (type === 'domestic') {
-      query.type = 'domestic';
+      console.log('Searching us_gateways with:', searchQuery);
+      airports = await db.collection('us_gateways')
+        .find(searchQuery)
+        .limit(20)
+        .toArray();
     } else if (type === 'international') {
-      query.type = 'foreign';
+      console.log('Searching foreign_gateways with:', searchQuery);
+      airports = await db.collection('foreign_gateways')
+        .find(searchQuery)
+        .limit(20)
+        .toArray();
+    } else {
+      // Search both
+      const [us, foreign] = await Promise.all([
+        db.collection('us_gateways').find(searchQuery).limit(10).toArray(),
+        db.collection('foreign_gateways').find(searchQuery).limit(10).toArray()
+      ]);
+      airports = [...us, ...foreign];
     }
     
-    const airports = await Airport.find(query, {
-      limit: 20,
-      select: 'code name city state country'
-    });
+    console.log(`Found ${airports.length} airports for query: ${q}, type: ${type}`);
     
     res.json({ 
       success: true,
