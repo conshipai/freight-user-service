@@ -1,4 +1,8 @@
-// src/controllers/airportController.js - UPDATED getNearestAirport function
+// At the top of the file, make sure you have:
+const Airport = require('../models/Airport');
+const ZipCodeAirport = require('../models/ZipCodeAirport');
+
+// Updated getNearestAirport function:
 const getNearestAirport = async (req, res) => {
   try {
     const { zipCode } = req.body;
@@ -10,15 +14,15 @@ const getNearestAirport = async (req, res) => {
       });
     }
     
-    // Find the BEST airport for this ZIP (closest delivery zone)
+    // Find the BEST airport for this ZIP (closest delivery zone - A is best)
     const zipMapping = await ZipCodeAirport.findBestAirport(zipCode);
     
     if (zipMapping) {
-      // Get the full airport details from us_gateways collection
+      // Get the full airport details from us_gateways
       const airport = await Airport.findOne({ 
         code: zipMapping.airportCode,
         active: true,
-        country: 'US' // Ensure it's a domestic airport
+        type: 'domestic' // Make sure it's domestic
       });
       
       if (airport) {
@@ -27,11 +31,10 @@ const getNearestAirport = async (req, res) => {
           airport: {
             code: airport.code,
             name: airport.name,
-            city: airport.city,
-            state: airport.state,
-            country: airport.country,
-            deliveryZone: zipMapping.deliveryZone, // Include delivery zone
-            distance: zipMapping.distance
+            city: airport.city || zipMapping.city,
+            state: airport.state || zipMapping.state,
+            country: 'US',
+            deliveryZone: zipMapping.deliveryZone
           }
         });
       }
@@ -47,7 +50,55 @@ const getNearestAirport = async (req, res) => {
     console.error('Error finding nearest airport:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Failed to find nearest airport' 
+      error: 'Failed to find nearest airport',
+      details: error.message 
+    });
+  }
+};
+
+// Updated searchAirports function:
+const searchAirports = async (req, res) => {
+  try {
+    const { q, type } = req.query;
+    
+    if (!q || q.length < 2) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Search query must be at least 2 characters' 
+      });
+    }
+    
+    const searchRegex = new RegExp(q, 'i');
+    const query = {
+      active: true,
+      $or: [
+        { code: searchRegex },
+        { name: searchRegex },
+        { city: searchRegex }
+      ]
+    };
+    
+    // Add type filter
+    if (type === 'domestic') {
+      query.type = 'domestic';
+    } else if (type === 'international') {
+      query.type = 'foreign';
+    }
+    
+    const airports = await Airport.find(query, {
+      limit: 20,
+      select: 'code name city state country'
+    });
+    
+    res.json({ 
+      success: true,
+      airports 
+    });
+  } catch (error) {
+    console.error('Error searching airports:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to search airports' 
     });
   }
 };
