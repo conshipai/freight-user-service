@@ -15,11 +15,10 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "resend": "^2.0.0",
-    "crypto": "^1.0.1",
     "axios": "^1.6.2",
     "@aws-sdk/client-s3": "^3.668.0",
     "@aws-sdk/s3-request-presigner": "^3.668.0",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^2.0.0-rc.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
