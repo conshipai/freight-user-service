@@ -5,20 +5,23 @@ const router = express.Router();
 // Apps registry for module federation
 router.get('/', (req, res) => {
   res.json({
-    quotes: {
-      name: 'quotes',
-      url: 'https://quotes.gcc.conship.ai/remoteEntry.js',
-      scope: 'quotes',
-      module: './App'
-    }
-    // Add more modules here as you create them
-    // Example for future modules:
-    // tracking: {
-    //   name: 'tracking',
-    //   url: 'https://tracking.gcc.conship.ai/remoteEntry.js',
-    //   scope: 'tracking',
-    //   module: './App'
-    // }
+    apps: [
+      {
+        id: 'quotes',
+        name: 'Quotes',
+        icon: 'Calculator',
+        url: 'https://quotes.gcc.conship.ai',
+        remoteEntry: 'https://quotes.gcc.conship.ai/remoteEntry.js',
+        scope: 'quotes',
+        module: './App',
+        type: 'module',
+        roles: ['system_admin', 'conship_employee', 'customer', 'foreign_partner'],
+        position: 1,
+        status: 'active',
+        description: 'Generate and manage freight quotes'
+      }
+      // Add more apps here as you create them
+    ]
   });
 });
 
