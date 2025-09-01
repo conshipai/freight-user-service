@@ -1,249 +1,189 @@
 // services/providers/ground/SEFLProvider.js
 const BaseGroundProvider = require('./BaseGroundProvider');
-const FormData = require('form-data');
 
 class SEFLProvider extends BaseGroundProvider {
   constructor() {
     super('Southeastern Freight Lines', 'SEFL');
-    this.apiUrl = 'https://www.sefl.com/webconnect/ratequotes/rest';
+    this.baseUrl = 'https://www.sefl.com/webconnect/ratequotes/rest';
     this.username = process.env.SEFL_USERNAME || 'CONSHIP';
     this.password = process.env.SEFL_PASSWORD || 'CON712';
     this.accountNumber = process.env.SEFL_ACCOUNT || '999851099';
     this.maxPollAttempts = 10;
-    this.pollDelay = 2000; // 2 seconds between polls
+    this.pollDelay = 800; // ms between polls
   }
 
   async getRates(requestData) {
     try {
-      console.log('📤 SEFL: Submitting quote request');
+      // Step 1: Submit quote
+      const formData = this.buildFormData(requestData);
+      const submitResult = await this.submitQuote(formData);
       
-      // Step 1: Submit the quote
-      const quoteNumber = await this.submitQuote(requestData);
-      if (!quoteNumber) {
+      if (!submitResult.quoteNumber) {
+        console.log('❌ SEFL: No quote number returned');
         return null;
       }
       
-      console.log(`📋 SEFL: Quote number ${quoteNumber} received, polling for rate...`);
+      console.log(`📋 SEFL: Quote ${submitResult.quoteNumber} submitted`);
       
-      // Step 2: Poll for the rated quote
-      const ratedQuote = await this.pollForRate(quoteNumber);
-      if (!ratedQuote) {
+      // Step 2: Poll for rated quote
+      const detail = await this.pollForRate(submitResult.quoteNumber);
+      
+      if (!detail || detail.status !== 'RAT') {
+        console.log('⚠️ SEFL: Quote not rated after polling');
         return null;
       }
       
-      console.log('✅ SEFL: Rate received');
-      
-      // Step 3: Parse and return in standard format
-      return this.parseRatedQuote(ratedQuote, quoteNumber);
+      // Step 3: Map to normalized format
+      return this.mapToNormalized(detail, requestData);
       
     } catch (error) {
       return this.logError(error, 'getRates');
     }
   }
 
-  async submitQuote(requestData) {
-    try {
-      // Build form data
-      const formData = this.buildFormData(requestData);
-      
-      // Create URL encoded string
-      const params = new URLSearchParams(formData).toString();
-      
-      const response = await fetch(`${this.apiUrl}/submitQuote`, {
-        method: 'POST',
-        headers: {
-          'Authorization': this.getAuthHeader(),
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: params
-      });
-
-      if (!response.ok) {
-        throw new Error(`Submit failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.errorOccured === 'true' || !data.quoteNumber) {
-        throw new Error(data.errorMessage || 'No quote number returned');
-      }
-
-      return data.quoteNumber;
-      
-    } catch (error) {
-      this.logError(error, 'submitQuote');
-      return null;
-    }
-  }
-
-  buildFormData(requestData) {
-    const pickupDate = new Date(requestData.pickupDate);
-    
-    const formData = {
-      // Account info
+  buildFormData(req) {
+    const pickupDate = new Date(req.pickupDate);
+    const params = new URLSearchParams({
+      // Account
       CustomerAccount: this.accountNumber,
       CustomerName: 'Conship',
-      CustomerCity: requestData.origin.city,
-      CustomerState: requestData.origin.state,
-      CustomerZip: requestData.origin.zipCode,
+      CustomerCity: req.origin.city,
+      CustomerState: req.origin.state,
+      CustomerZip: req.origin.zipCode,
       
-      // Shipment options
-      Option: 'S', // Standard
-      Terms: 'P', // Prepaid
+      // Shipment
+      Option: 'S',
+      Terms: 'P',
       
-      // Pickup date
+      // Date
       PickupDateMM: String(pickupDate.getMonth() + 1).padStart(2, '0'),
       PickupDateDD: String(pickupDate.getDate()).padStart(2, '0'),
       PickupDateYYYY: String(pickupDate.getFullYear()),
       
-      // Origin
-      OriginCity: requestData.origin.city,
-      OriginState: requestData.origin.state,
-      OriginZip: requestData.origin.zipCode,
+      // Locations
+      OriginCity: req.origin.city,
+      OriginState: req.origin.state,
+      OriginZip: req.origin.zipCode,
+      DestinationCity: req.destination.city,
+      DestinationState: req.destination.state,
+      DestinationZip: req.destination.zipCode,
       
-      // Destination
-      DestinationCity: requestData.destination.city,
-      DestinationState: requestData.destination.state,
-      DestinationZip: requestData.destination.zipCode,
-      
-      // Dimensions flag
-      DimsOption: 'I' // Individual piece dimensions
-    };
+      DimsOption: 'I'
+    });
 
-    // Add commodities
-    requestData.commodities.forEach((item, index) => {
-      const suffix = index + 1;
-      formData[`NumberOfUnits${suffix}`] = item.quantity;
-      formData[`PieceLength${suffix}`] = Math.round(item.length);
-      formData[`PieceWidth${suffix}`] = Math.round(item.width);
-      formData[`PieceHeight${suffix}`] = Math.round(item.height);
-      formData[`UnitOfMeasure${suffix}`] = 'I'; // Inches
-      formData[`Weight${suffix}`] = Math.round(item.weight);
-      formData[`WeightUnitOfMeasure${suffix}`] = 'LBS';
-      formData[`Description${suffix}`] = item.description || 'General Merchandise';
+    // Add pieces
+    req.commodities?.forEach((item, i) => {
+      const n = i + 1;
+      params.set(`NumberOfUnits${n}`, String(item.quantity));
+      params.set(`PieceLength${n}`, String(Math.round(item.length)));
+      params.set(`PieceWidth${n}`, String(Math.round(item.width)));
+      params.set(`PieceHeight${n}`, String(Math.round(item.height)));
+      params.set(`UnitOfMeasure${n}`, 'I');
+      params.set(`Weight${n}`, String(Math.round(item.weight)));
+      params.set(`WeightUnitOfMeasure${n}`, 'LBS');
+      params.set(`Description${n}`, item.description || 'General Merchandise');
     });
 
     // Add accessorials
-    if (requestData.accessorials) {
-      if (requestData.accessorials.residentialPickup) {
-        formData.ResidentialPickup = 'Y';
-      }
-      if (requestData.accessorials.residentialDelivery) {
-        formData.ResidentialDelivery = 'Y';
-      }
-      if (requestData.accessorials.liftgatePickup) {
-        formData.LiftgatePickup = 'Y';
-      }
-      if (requestData.accessorials.liftgateDelivery) {
-        formData.LiftgateDelivery = 'Y';
-      }
-      if (requestData.accessorials.insidePickup) {
-        formData.InsidePickup = 'Y';
-      }
-      if (requestData.accessorials.insideDelivery) {
-        formData.InsideDelivery = 'Y';
-      }
-      if (requestData.accessorials.limitedAccessPickup) {
-        formData.LimitedAccessPickup = 'Y';
-      }
-      if (requestData.accessorials.limitedAccessDelivery) {
-        formData.LimitedAccessDelivery = 'Y';
-      }
-      if (requestData.accessorials.appointmentRequired) {
-        formData.AppointmentDelivery = 'Y';
-      }
+    const acc = req.accessorials;
+    if (acc?.residentialPickup) params.set('ResidentialPickup', 'Y');
+    if (acc?.residentialDelivery) params.set('ResidentialDelivery', 'Y');
+    if (acc?.liftgatePickup) params.set('LiftgatePickup', 'Y');
+    if (acc?.liftgateDelivery) params.set('LiftgateDelivery', 'Y');
+    if (acc?.insidePickup) params.set('InsidePickup', 'Y');
+    if (acc?.insideDelivery) params.set('InsideDelivery', 'Y');
+    if (acc?.limitedAccessPickup) params.set('LimitedAccessPickup', 'Y');
+    if (acc?.limitedAccessDelivery) params.set('LimitedAccessDelivery', 'Y');
+
+    return params;
+  }
+
+  async submitQuote(formData) {
+    const response = await fetch(`${this.baseUrl}/submitQuote`, {
+      method: 'POST',
+      headers: {
+        'Authorization': this.getAuthHeader(),
+        'Accept': 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: formData.toString()
+    });
+
+    if (!response.ok) {
+      throw new Error(`SEFL submit failed: ${response.status}`);
     }
 
-    return formData;
+    const data = await response.json();
+    
+    if (data.errorOccured === 'true') {
+      throw new Error(data.errorMessage || 'SEFL submit error');
+    }
+    
+    return data;
   }
 
   async pollForRate(quoteNumber) {
-    for (let attempt = 1; attempt <= this.maxPollAttempts; attempt++) {
-      try {
-        const response = await fetch(
-          `${this.apiUrl}/${quoteNumber}?ReturnDetail=Y`,
-          {
-            headers: {
-              'Authorization': this.getAuthHeader(),
-              'Accept': 'application/json'
-            }
+    for (let i = 0; i < this.maxPollAttempts; i++) {
+      const response = await fetch(
+        `${this.baseUrl}/${quoteNumber}?ReturnDetail=Y`,
+        {
+          headers: {
+            'Authorization': this.getAuthHeader(),
+            'Accept': 'application/json'
           }
-        );
+        }
+      );
 
-        if (!response.ok) {
-          throw new Error(`Poll failed with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.status === 'RAT') {
-          return data; // Quote is rated!
-        }
-        
-        if (data.status === 'ERR') {
-          throw new Error(data.errorMessage || 'Quote error');
-        }
-        
-        // Still processing, wait and try again
-        console.log(`⏳ SEFL: Attempt ${attempt}/${this.maxPollAttempts} - Status: ${data.status}`);
-        await new Promise(resolve => setTimeout(resolve, this.pollDelay));
-        
-      } catch (error) {
-        this.logError(error, `pollForRate attempt ${attempt}`);
-        if (attempt === this.maxPollAttempts) {
-          return null;
-        }
+      if (!response.ok) {
+        throw new Error(`SEFL fetch failed: ${response.status}`);
       }
+
+      const detail = await response.json();
+      
+      if (detail.status === 'RAT') {
+        return detail;
+      }
+      
+      if (detail.status === 'ERR') {
+        throw new Error(detail.errorMessage || 'Quote error');
+      }
+      
+      // Wait before next attempt
+      await new Promise(resolve => setTimeout(resolve, this.pollDelay));
     }
     
-    console.log('⏰ SEFL: Max polling attempts reached');
     return null;
   }
 
-  parseRatedQuote(data, quoteNumber) {
-    try {
-      // Parse charges from details array
-      let baseFreight = 0;
-      let fuelSurcharge = 0;
-      let accessorialCharges = 0;
-      
-      if (data.details && Array.isArray(data.details)) {
-        data.details.forEach(charge => {
-          const amount = parseFloat(charge.charges) || 0;
-          
-          if (charge.typeCharge === 'MFC' || charge.typeCharge === 'FRT') {
-            // Minimum freight charge or regular freight
-            baseFreight += amount;
-          } else if (charge.typeCharge === 'FS') {
-            // Fuel surcharge
-            fuelSurcharge = amount;
-          } else if (charge.typeCharge !== 'TTL') {
-            // Other charges (not total)
-            accessorialCharges += amount;
-          }
-        });
-      }
+  mapToNormalized(detail, requestData) {
+    const total = parseFloat(detail.rateQuote) || 0;
+    
+    // Parse charge lines
+    const charges = (detail.details || []).map(d => ({
+      code: (d.typeCharge || '').trim(),
+      description: (d.description || '').trim(),
+      amount: parseFloat(d.charges) || 0
+    }));
 
-      // If we couldn't break down charges, use total as base
-      if (baseFreight === 0 && data.rateQuote) {
-        baseFreight = parseFloat(data.rateQuote) - fuelSurcharge - accessorialCharges;
-      }
+    // Extract specific charges
+    const baseCharge = charges.find(c => c.code === 'MFC');
+    const fuelCharge = charges.find(c => c.code === 'FS');
+    
+    const baseAmount = baseCharge?.amount || 0;
+    const fuelAmount = fuelCharge?.amount || 0;
+    const accessorialAmount = total - baseAmount - fuelAmount;
 
-      return this.formatStandardResponse({
-        service: 'Standard LTL',
-        baseFreight: baseFreight,
-        fuelSurcharge: fuelSurcharge,
-        accessorialCharges: accessorialCharges,
-        transitDays: parseInt(data.transitTime) || 3,
-        guaranteed: false,
-        quoteId: quoteNumber,
-        validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-      });
-      
-    } catch (error) {
-      return this.logError(error, 'parseRatedQuote');
-    }
+    // Return in your standard format
+    return this.formatStandardResponse({
+      service: 'Standard LTL',
+      baseFreight: baseAmount,
+      fuelSurcharge: fuelAmount,
+      accessorialCharges: accessorialAmount > 0 ? accessorialAmount : 0,
+      transitDays: parseInt(detail.transitTime) || 3,
+      guaranteed: false,
+      quoteId: detail.quoteNumber,
+      validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    });
   }
 
   getAuthHeader() {
