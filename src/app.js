@@ -22,6 +22,7 @@ const partnerRoutes = require('./routes/partners');
 const airportRoutes = require('./routes/airports');
 const registryRoutes = require('./routes/registry');
 const bookingRoutes = require('./routes/bookings');
+const groundQuoteRoutes = require('./routes/groundQuotes');
 
 // ✅ NEW: sequences & storage
 const sequenceRoutes = require('./routes/sequences');
@@ -36,6 +37,7 @@ app.use('/api/partners', partnerRoutes);
 app.use('/api/airports', airportRoutes);
 app.use('/api/apps/registry', registryRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/ground-quotes', groundQuoteRoutes);
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
