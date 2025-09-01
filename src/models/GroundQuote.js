@@ -155,8 +155,8 @@ const groundQuoteSchema = new mongoose.Schema({
 groundQuoteSchema.pre('save', async function(next) {
   if (!this.quoteNumber) {
     const year = new Date().getFullYear();
-    const count = await mongoose.model('GroundQuote').countDocuments();
-    const number = String(count + 1).padStart(6, '0');
+    const count = await mongoose.model('GroundQuote').countDocuments() + 1;
+    const number = String(count).padStart(6, '0');
     this.quoteNumber = `GQ-${year}-${number}`;
   }
   next();
