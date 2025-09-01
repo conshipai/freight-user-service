@@ -1,79 +1,100 @@
-// At the top, add:
+/**
+ * services/ground/processGroundQuote.js
+ *
+ * Drop-in: parallel ground rating via GroundProviderFactory.
+ * - Minimal changes: adds GroundProviderFactory + replaces processGroundQuote.
+ * - Keeps your Cost/Quote creation + 18% markup flow intact.
+ */
+
+const GroundRequest = require('../models/GroundRequest');
+const GroundCost    = require('../models/GroundCost');
+const GroundQuote   = require('../models/GroundQuote');
+
+// NEW: provider factory to fan-out to all active ground carriers
 const GroundProviderFactory = require('../services/providers/GroundProviderFactory');
 
-// Replace the processGroundQuote function:
+/**
+ * Kick off rating for a ground (LTL) request and persist results.
+ * @param {string} requestId - Mongo _id of the GroundRequest
+ */
 async function processGroundQuote(requestId) {
   try {
     console.log('🔄 Processing ground quote:', requestId);
-    
-    // Get the request details
-    const request = await GroundRequest.findById(requestId)
-      .select('+ltlDetails +accessorials');
-      
+
+    // Ensure we can read LTL-specific fields and accessorials
+    const request = await GroundRequest.findById(requestId).select('+ltlDetails +accessorials');
     if (!request) {
       throw new Error('Request not found');
     }
 
-    // Prepare data for carriers
+    // Prepare normalized payload for carrier providers
     const carrierRequestData = {
-      origin: request.origin,
-      destination: request.destination,
-      pickupDate: request.pickupDate,
-      commodities: request.ltlDetails?.commodities || [],
-      accessorials: request.accessorials,
-      serviceType: request.serviceType
+      origin:       request.origin,
+      destination:  request.destination,
+      pickupDate:   request.pickupDate,
+      commodities:  request.ltlDetails?.commodities || [],
+      accessorials: request.accessorials || {},
+      serviceType:  request.serviceType || 'standard'
     };
 
-    // Get rates from all active carriers in parallel
+    // Ask all active providers for rates in parallel
     const carrierRates = await GroundProviderFactory.getRatesFromAll(carrierRequestData);
-    
-    if (carrierRates.length === 0) {
+
+    if (!Array.isArray(carrierRates) || carrierRates.length === 0) {
       throw new Error('No carriers returned rates');
     }
 
-    // Save each carrier's rate
+    // Persist each carrier result as GroundCost + GroundQuote (with markup)
     for (const rate of carrierRates) {
-      // Create cost record
+      // Defensive defaults so a provider with partial data doesn't blow up the run
+      const baseFreight        = Number(rate.baseFreight ?? 0);
+      const fuelSurcharge      = Number(rate.fuelSurcharge ?? 0);
+      const accessorialCharges = Array.isArray(rate.accessorialCharges) ? rate.accessorialCharges : [];
+      const computedTotal      = baseFreight + fuelSurcharge + accessorialCharges.reduce((s, a) => s + Number(a.amount || 0), 0);
+      const totalCost          = Number(rate.totalCost ?? computedTotal);
+      const transitDays        = Number(rate.transitDays ?? 0);
+      const guaranteed         = Boolean(rate.guaranteed ?? false);
+
       const cost = new GroundCost({
-        requestId: requestId,
-        provider: rate.provider,
-        carrierName: rate.carrierName,
-        service: rate.service,
+        requestId,
+        provider: rate.provider || 'unknown',
+        carrierName: rate.carrierName || 'Unknown Carrier',
+        service: rate.service || request.serviceType || 'standard',
         serviceType: request.serviceType,
         costs: {
-          baseFreight: rate.baseFreight,
-          fuelSurcharge: rate.fuelSurcharge,
-          accessorials: rate.accessorialCharges,
-          totalCost: rate.totalCost
+          baseFreight,
+          fuelSurcharge,
+          accessorials: accessorialCharges,
+          totalCost
         },
         transit: {
-          businessDays: rate.transitDays,
-          guaranteed: rate.guaranteed
+          businessDays: transitDays,
+          guaranteed
         },
-        externalQuoteId: rate.quoteId,
-        validUntil: rate.validUntil,
+        externalQuoteId: rate.quoteId || rate.externalQuoteId || null,
+        validUntil: rate.validUntil || null,
         status: 'completed'
       });
       await cost.save();
-      
-      // Create quote with markup
-      const markupPercentage = 18; // TODO: Get from MarkupService based on user
-      const markupAmount = rate.totalCost * (markupPercentage / 100);
-      
+
+      // Apply markup (TODO: replace with MarkupService/user-specific rules)
+      const markupPercentage = 18;
+      const markupAmount = totalCost * (markupPercentage / 100);
+
       const quote = new GroundQuote({
-        requestId: requestId,
+        requestId,
         costId: cost._id,
         userId: request.userId,
         carrier: {
-          name: rate.carrierName,
-          code: rate.provider,
-          service: rate.service
+          name: rate.carrierName || 'Unknown Carrier',
+          code: rate.provider || 'unknown',
+          service: rate.service || request.serviceType || 'standard'
         },
         rawCost: {
-          baseFreight: rate.baseFreight,
-          fuelSurcharge: rate.fuelSurcharge,
-          accessorials: rate.accessorialCharges,
-          total: rate.totalCost
+          baseFreight,
+          fuelSurcharge,
+          accessorials: accessorialCharges,
+          total: totalCost
         },
         markup: {
           type: 'percentage',
@@ -81,37 +102,44 @@ async function processGroundQuote(requestId) {
           totalMarkup: markupAmount
         },
         customerPrice: {
-          subtotal: rate.totalCost + markupAmount,
+          subtotal: totalCost + markupAmount,
           fees: 0,
-          total: rate.totalCost + markupAmount
+          total: totalCost + markupAmount
         },
         transit: {
-          businessDays: rate.transitDays,
-          guaranteed: rate.guaranteed
+          businessDays: transitDays,
+          guaranteed
         },
         status: 'active',
-        validUntil: rate.validUntil
+        validUntil: rate.validUntil || null
       });
       await quote.save();
-      
-      console.log(`💰 Saved quote from ${rate.carrierName}: $${quote.customerPrice.total.toFixed(2)}`);
+
+      console.log(`💰 Saved quote from ${quote.carrier.name}: $${quote.customerPrice.total.toFixed(2)}`);
     }
-    
-    // Update request status to quoted
+
+    // Finalize request status
     await GroundRequest.findByIdAndUpdate(requestId, {
       status: 'quoted',
       quotedAt: new Date(),
       quoteCount: carrierRates.length
     });
-    
+
     console.log(`✅ Ground quote complete with ${carrierRates.length} rates`);
-    
   } catch (error) {
-    console.error('❌ Error processing ground quote:', error);
-    await GroundRequest.findByIdAndUpdate(requestId, {
-      status: 'failed',
-      error: error.message,
-      failedAt: new Date()
-    });
+    console.error('❌ Error processing ground quote:', error?.stack || error?.message || error);
+    try {
+      await GroundRequest.findByIdAndUpdate(requestId, {
+        status: 'failed',
+        error: error.message || String(error),
+        failedAt: new Date()
+      });
+    } catch (e) {
+      console.error('⚠️ Failed to mark request as failed:', e?.message || e);
+    }
   }
 }
+
+module.exports = {
+  processGroundQuote
+};
