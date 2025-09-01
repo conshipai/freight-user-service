@@ -1,5 +1,5 @@
 // In src/services/providers/ground/STGProvider.js
-
+const BaseGroundProvider = require('./BaseGroundProvider');
 const axios = require('axios');
 
 class STGProvider extends BaseGroundProvider {
