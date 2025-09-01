@@ -33,7 +33,10 @@ const groundCostSchema = new mongoose.Schema({
     fuelSurcharge: Number,
     fuelPercentage: Number, // Fuel as percentage of base
     
-    // Accessorial charges
+    // Accessorial charges simplified to a number
+    accessorials: { type: Number, default: 0 },
+
+    /* Old detailed accessorials object (deprecated):
     accessorials: {
       liftgatePickup: Number,
       liftgateDelivery: Number,
@@ -51,6 +54,7 @@ const groundCostSchema = new mongoose.Schema({
         amount: Number
       }]
     },
+    */
     
     // Totals
     totalAccessorials: Number,
@@ -131,16 +135,9 @@ groundCostSchema.methods.isValid = function() {
   return this.status === 'completed';
 };
 
-// Method to calculate total with specific accessorials
-groundCostSchema.methods.calculateTotal = function(selectedAccessorials = {}) {
-  let total = this.costs.baseFreight + (this.costs.fuelSurcharge || 0);
-  
-  // Add selected accessorials
-  Object.keys(selectedAccessorials).forEach(key => {
-    if (selectedAccessorials[key] && this.costs.accessorials[key]) {
-      total += this.costs.accessorials[key];
-    }
-  });
+// Method to calculate total including simplified accessorials
+groundCostSchema.methods.calculateTotal = function() {
+  let total = this.costs.baseFreight + (this.costs.fuelSurcharge || 0) + (this.costs.accessorials || 0);
   
   // Apply discount if any
   if (this.costs.discount) {
