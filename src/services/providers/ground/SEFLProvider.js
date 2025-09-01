@@ -13,33 +13,40 @@ class SEFLProvider extends BaseGroundProvider {
   }
 
   async getRates(requestData) {
-    try {
-      // Step 1: Submit quote
-      const formData = this.buildFormData(requestData);
-      const submitResult = await this.submitQuote(formData);
-      
-      if (!submitResult.quoteNumber) {
-        console.log('❌ SEFL: No quote number returned');
-        return null;
-      }
-      
-      console.log(`📋 SEFL: Quote ${submitResult.quoteNumber} submitted`);
-      
-      // Step 2: Poll for rated quote
-      const detail = await this.pollForRate(submitResult.quoteNumber);
-      
-      if (!detail || detail.status !== 'RAT') {
-        console.log('⚠️ SEFL: Quote not rated after polling');
-        return null;
-      }
-      
-      // Step 3: Map to normalized format
-      return this.mapToNormalized(detail, requestData);
-      
-    } catch (error) {
-      return this.logError(error, 'getRates');
+  try {
+    // Step 1: Submit quote
+    const formData = this.buildFormData(requestData);
+    console.log('📤 SEFL: Submitting quote with form data...');
+    
+    const submitResult = await this.submitQuote(formData);
+    console.log('📥 SEFL Submit Response:', JSON.stringify(submitResult, null, 2));
+    
+    if (!submitResult.quoteNumber) {
+      console.log('❌ SEFL: No quote number in response');
+      return null;
     }
+    
+    console.log(`✅ SEFL: Quote ${submitResult.quoteNumber} submitted, starting polling...`);
+    
+    // Step 2: Poll for rated quote
+    const detail = await this.pollForRate(submitResult.quoteNumber);
+    console.log('📥 SEFL Rate Response:', JSON.stringify(detail, null, 2));
+    
+    if (!detail || detail.status !== 'RAT') {
+      console.log('⚠️ SEFL: Quote not rated after polling, status:', detail?.status);
+      return null;
+    }
+    
+    console.log('✅ SEFL: Got rated quote!');
+    
+    // Step 3: Map to normalized format
+    return this.mapToNormalized(detail, requestData);
+    
+  } catch (error) {
+    console.error('❌ SEFL Error:', error.message);
+    return this.logError(error, 'getRates');
   }
+}
 
   buildFormData(req) {
     const pickupDate = new Date(req.pickupDate);
