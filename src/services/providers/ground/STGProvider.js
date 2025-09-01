@@ -1,4 +1,4 @@
-// In src/services/providers/ground/STGProvider.js
+// src/services/providers/ground/STGProvider.js
 const BaseGroundProvider = require('./BaseGroundProvider');
 const axios = require('axios');
 
@@ -43,9 +43,14 @@ class STGProvider extends BaseGroundProvider {
         return null;
       }
 
-      // Ensure we have valid token
+      // ACTUALLY AUTHENTICATE HERE!
       if (!this.token || !this.tokenExpiry || new Date() >= this.tokenExpiry) {
-        await this.authenticate();
+        try {
+          await this.authenticate();
+        } catch (authError) {
+          console.error('❌ STG/FreightForce: Authentication failed, skipping');
+          return null;
+        }
       }
 
       const payload = this.buildRequest(requestData);
@@ -55,7 +60,8 @@ class STGProvider extends BaseGroundProvider {
         headers: {
           'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 30000
       });
 
       console.log('📥 STG/FreightForce response:', JSON.stringify(response.data, null, 2));
@@ -92,7 +98,7 @@ class STGProvider extends BaseGroundProvider {
   }
 
   parseResponse(data) {
-    // Parse FreightForce response
+    // Parse FreightForce response based on their actual format
     const baseFreight = parseFloat(data.freight_Charge) || 0;
     const fuelSurcharge = parseFloat(data.freight_FSC) || 0;
     const accessorials = parseFloat(data.accessorialTotal) || 0;
