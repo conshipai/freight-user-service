@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const groundRequestSchema = new mongoose.Schema({
   requestNumber: {
     type: String,
-    required: true,
     unique: true
   },
   
