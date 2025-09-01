@@ -13,6 +13,23 @@ const GroundQuote   = require('../../models/GroundQuote');
 // NEW: provider factory to fan-out to all active ground carriers
 const GroundProviderFactory = require('../providers/GroundProviderFactory');
 
+// Helper: robustly sum accessorials regardless of provider shape
+function sumAccessorials(accessorialCharges) {
+  if (typeof accessorialCharges === 'number') return accessorialCharges;
+  if (Array.isArray(accessorialCharges)) {
+    return accessorialCharges.reduce((sum, ch) => sum + Number(ch?.amount ?? 0), 0);
+  }
+  if (accessorialCharges && typeof accessorialCharges === 'object') {
+    // handle map/object form { code: { amount }, ... } OR { code: number }
+    return Object.values(accessorialCharges).reduce((sum, v) => {
+      if (typeof v === 'number') return sum + v;
+      if (v && typeof v === 'object') return sum + Number(v.amount ?? 0);
+      return sum;
+    }, 0);
+  }
+  return 0;
+}
+
 /**
  * Kick off rating for a ground (LTL) request and persist results.
  * @param {string} requestId - Mongo _id of the GroundRequest
@@ -49,8 +66,9 @@ async function processGroundQuote(requestId) {
       // Defensive defaults so a provider with partial data doesn't blow up the run
       const baseFreight        = Number(rate.baseFreight ?? 0);
       const fuelSurcharge      = Number(rate.fuelSurcharge ?? 0);
-      const accessorialCharges = Array.isArray(rate.accessorialCharges) ? rate.accessorialCharges : [];
-      const computedTotal      = baseFreight + fuelSurcharge + accessorialCharges.reduce((s, a) => s + Number(a.amount || 0), 0);
+      const accessorialCharges = Array.isArray(rate.accessorialCharges) ? rate.accessorialCharges : (rate.accessorialCharges ?? []);
+      const accessorialsTotal  = sumAccessorials(accessorialCharges);
+      const computedTotal      = baseFreight + fuelSurcharge + accessorialsTotal;
       const totalCost          = Number(rate.totalCost ?? computedTotal);
       const transitDays        = Number(rate.transitDays ?? 0);
       const guaranteed         = Boolean(rate.guaranteed ?? false);
@@ -64,7 +82,7 @@ async function processGroundQuote(requestId) {
         costs: {
           baseFreight,
           fuelSurcharge,
-          accessorials: accessorialCharges,
+          accessorials: accessorialCharges, // keep raw array/map on Cost
           totalCost
         },
         transit: {
@@ -81,6 +99,7 @@ async function processGroundQuote(requestId) {
       const markupPercentage = 18;
       const markupAmount = totalCost * (markupPercentage / 100);
 
+      // ⬇️ FIXED: Accessorials are properly totaled in rawCost
       const quote = new GroundQuote({
         requestId,
         costId: cost._id,
@@ -90,16 +109,12 @@ async function processGroundQuote(requestId) {
           code: rate.provider || 'unknown',
           service: rate.service || request.serviceType || 'standard'
         },
-             rawCost: {
+        rawCost: {
           baseFreight,
           fuelSurcharge,
-          accessorials: typeof accessorialCharges === 'number' 
-            ? accessorialCharges 
-            : Array.isArray(accessorialCharges) 
-              ? accessorialCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0)
-              : 0,
+          accessorials: accessorialsTotal, // sum (number), not array/object
           total: totalCost
-        }
+        },
         markup: {
           type: 'percentage',
           percentage: markupPercentage,
