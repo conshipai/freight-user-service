@@ -17,7 +17,6 @@ const groundQuoteSchema = new mongoose.Schema({
   quoteNumber: {
     type: String,
     unique: true,
-    required: true
   },
   
   // User/Company Information
