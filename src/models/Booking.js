@@ -19,8 +19,8 @@ const BookingSchema = new mongoose.Schema({
   
   // Link to original quote request
   requestId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Request'
+    type: String,
+    ref: false
   },
   
   // Booking details
@@ -45,8 +45,8 @@ const BookingSchema = new mongoose.Schema({
   
   // User info
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    type: String,
+    ref: false
   },
   userEmail: String,
   
