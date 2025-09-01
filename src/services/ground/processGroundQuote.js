@@ -11,7 +11,7 @@ const GroundCost    = require('../../models/GroundCost');
 const GroundQuote   = require('../../models/GroundQuote');
 
 // NEW: provider factory to fan-out to all active ground carriers
-const GroundProviderFactory = require('../services/providers/GroundProviderFactory');
+const GroundProviderFactory = require('../providers/GroundProviderFactory');
 
 /**
  * Kick off rating for a ground (LTL) request and persist results.
