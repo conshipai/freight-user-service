@@ -119,6 +119,37 @@ router.get('/results/:requestId', async (req, res) => {
   }
 });
 
+/**
+ * Manually retry a failed (or stuck) ground quote request
+ * - Resets status to 'pending'
+ * - Clears error
+ * - Kicks off processing again
+ */
+router.post('/retry/:requestId', async (req, res) => {
+  try {
+    const request = await GroundRequest.findById(req.params.requestId);
+    if (!request) {
+      return res.status(404).json({ success: false, error: 'Request not found' });
+    }
+
+    // Reset status & error
+    request.status = 'pending';
+    request.error = null;
+    await request.save();
+
+    // Retry processing (fire-and-forget)
+    processGroundQuote(request._id);
+
+    res.json({
+      success: true,
+      message: 'Retrying quote processing'
+    });
+  } catch (error) {
+    console.error('❌ Retry error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Process quote (this will be called async)
 async function processGroundQuote(requestId) {
   try {
