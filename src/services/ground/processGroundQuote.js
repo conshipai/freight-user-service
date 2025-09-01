@@ -90,12 +90,16 @@ async function processGroundQuote(requestId) {
           code: rate.provider || 'unknown',
           service: rate.service || request.serviceType || 'standard'
         },
-        rawCost: {
+             rawCost: {
           baseFreight,
           fuelSurcharge,
-          accessorials: accessorialCharges,
+          accessorials: typeof accessorialCharges === 'number' 
+            ? accessorialCharges 
+            : Array.isArray(accessorialCharges) 
+              ? accessorialCharges.reduce((sum, charge) => sum + (charge.amount || 0), 0)
+              : 0,
           total: totalCost
-        },
+        }
         markup: {
           type: 'percentage',
           percentage: markupPercentage,
