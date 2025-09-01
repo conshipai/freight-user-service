@@ -1,7 +1,6 @@
 // services/providers/GroundProviderFactory.js
 const STGProvider = require('./ground/STGProvider');
 const SEFLProvider = require('./ground/SEFLProvider');
-// Import more as you add them
 
 class GroundProviderFactory {
   constructor() {
