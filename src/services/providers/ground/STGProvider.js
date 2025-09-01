@@ -238,77 +238,78 @@ class STGProvider extends BaseGroundProvider {
 
   // --- Response parser -------------------------------------------------------
 
-  parseResponse(data) {
-    // The API may return either a flattened object or a nested structure.
-    // Try several common shapes and normalize.
-
-    // Try to pick obvious totals/parts if present
-    const baseFreight = Number(
-      STGProvider.pickFirst(data, ['freight_Charge', 'freightCharge', 'base', 'linehaul', 'freight'], 0)
-    ) || 0;
-
-    const fuelSurcharge = Number(
-      STGProvider.pickFirst(data, ['freight_FSC', 'fuelSurcharge', 'fuel', 'fsc'], 0)
-    ) || 0;
-
-    // Accessorials may be a total number or a line-items array we need to sum
-    let accessorials = 0;
-
-    const accessorialTotal = Number(
-      STGProvider.pickFirst(data, ['accessorialTotal', 'accessorialsTotal', 'accessorial_amount'], 0)
-    );
-
-    if (!Number.isNaN(accessorialTotal) && accessorialTotal > 0) {
-      accessorials = accessorialTotal;
-    } else {
-      const accList =
-        STGProvider.pickFirst(data, ['accessorials', 'deliveryAccessorials', 'pickupAccessorials'], []);
-      if (Array.isArray(accList)) {
-        accessorials = accList.reduce((sum, a) => {
-          const amt = Number(a.amount ?? a.charge ?? a.total ?? 0);
-          return sum + (Number.isFinite(amt) ? amt : 0);
-        }, 0);
+parseResponse(data) {
+  // small helpers so this works even if pickFirst isn’t defined elsewhere
+  const pickFirst = (obj, keys, fallback = 0) => {
+    for (const k of keys) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
+        return obj[k];
       }
     }
+    return fallback;
+  };
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
 
-    // Grand total: try explicit field first; fall back to computed
-    const explicitTotal = Number(
-      STGProvider.pickFirst(
-        data,
-        ['quoteRateTotal', 'total', 'grandTotal', 'totalRate', 'amount'],
-        NaN
-      )
-    );
+  // --- Freight components (pickup + linehaul + delivery)
+  const pickupFreight   = num(pickFirst(data, ['pickup_FreightCharge', 'pickupFreight', 'pickup_freight', 'pickupFreightCharge'], 0));
+  const deliveryFreight = num(pickFirst(data, ['delivery_FreightCharge','deliveryFreight','delivery_freight','deliveryFreightCharge'], 0));
+  const lineFreight     = num(pickFirst(data, ['freight_Charge','linehaul','freight','lineFreight'], 0));
+  const baseFreight     = pickupFreight + deliveryFreight + lineFreight;
 
-    const computedTotal = baseFreight + fuelSurcharge + accessorials;
-    const total = Number.isFinite(explicitTotal) ? explicitTotal : computedTotal;
+  // --- Fuel components
+  const pickupFuel      = num(pickFirst(data, ['pickup_FSC','pickupFuel','pickup_fuel','pickupFuelSurcharge'], 0));
+  const deliveryFuel    = num(pickFirst(data, ['delivery_FSC','deliveryFuel','delivery_fuel','deliveryFuelSurcharge'], 0));
+  const lineFuel        = num(pickFirst(data, ['freight_FSC','fuelSurcharge','fuel','fsc','lineFuel'], 0));
+  const fuelSurcharge   = pickupFuel + deliveryFuel + lineFuel;
 
-    // Transit time
-    const transitDays = parseInt(
-      STGProvider.pickFirst(data, ['transitTime', 'transitDays', 'etaDays'], 3),
-      10
-    ) || 3;
-
-    // Quote id/number
-    const quoteId =
-      STGProvider.pickFirst(data, ['quoteNumber', 'quoteId', 'quote', 'id', 'reference'], undefined) ||
-      // sometimes nested like data.quote?.number
-      STGProvider.pickFirst(data?.quote || {}, ['number', 'id'], undefined);
-
-    // Shape for your system
-    return this.formatStandardResponse({
-      service: 'Standard LTL',
-      baseFreight,
-      fuelSurcharge,
-      accessorialCharges: accessorials,
-      total,                // In case your formatter uses it
-      transitDays,
-      guaranteed: false,
-      quoteId,
-      validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      raw: data,            // keep raw in case upstream layers want to show details
-    });
+  // --- Accessorials
+  let accessorials = num(pickFirst(data, ['accessorialTotal','accessorialsTotal','accessorial_amount'], 0));
+  if (!accessorials) {
+    const accList = pickFirst(data, ['accessorials', 'deliveryAccessorials', 'pickupAccessorials'], []);
+    if (Array.isArray(accList)) {
+      accessorials = accList.reduce((sum, a) => {
+        const amt = num(a?.amount ?? a?.charge ?? a?.total);
+        return sum + amt;
+      }, 0);
+    }
   }
-}
 
+  // --- Total (prefer API’s grand total)
+  let total = num(pickFirst(data, ['quoteRateTotal', 'total', 'grandTotal', 'totalRate', 'amount'], 0));
+  if (!total) {
+    total = baseFreight + fuelSurcharge + accessorials;
+  }
+
+  // --- Transit / Quote Id
+  const transitDays = parseInt(pickFirst(data, ['transitTime', 'transitDays', 'etaDays'], 3), 10) || 3;
+  const quoteId = pickFirst(data, ['quoteId', 'quoteNumber', 'reference', 'id'], undefined)
+               || pickFirst(data?.quote || {}, ['number', 'id'], undefined);
+
+  // Debug breakdown
+  console.log('🔍 STG Price Breakdown:');
+  console.log('   Pickup:       $' + (pickupFreight + pickupFuel).toFixed(2));
+  console.log('   Linehaul:     $' + (lineFreight   + lineFuel).toFixed(2));
+  console.log('   Delivery:     $' + (deliveryFreight + deliveryFuel).toFixed(2));
+  console.log('   Accessorials: $' + accessorials.toFixed(2));
+  console.log('   Total:        $' + total.toFixed(2));
+
+  // Return normalized result
+  return this.formatStandardResponse({
+    service: 'Standard LTL',
+    baseFreight,                    // pickup + line + delivery (freight only)
+    fuelSurcharge,                  // pickup + line + delivery (fuel only)
+    accessorialCharges: accessorials,
+    total,                          // keep both keys for downstream compatibility
+    totalCost: total,
+    transitDays,
+    guaranteed: false,
+    quoteId,
+    validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    raw: data,
+  });
+}
+}
 module.exports = STGProvider;
