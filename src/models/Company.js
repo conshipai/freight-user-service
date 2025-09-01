@@ -66,6 +66,26 @@ const companySchema = new mongoose.Schema({
   // Special privileges
   canSeeDirectCosts: { type: Boolean, default: false },
   
+  // Carrier settings and preferences
+  carrierSettings: {
+    preferredCarriers: [{
+      type: String,
+      enum: ['FEDEX_FREIGHT', 'OLD_DOMINION', 'XPO', 'ESTES', 'RL_CARRIERS', 
+             'TFORCE', 'SAIA', 'ABF', 'SEFL', 'AVERITT', 'FEDEX_EXPRESS', 
+             'UPS', 'CENTRAL_TRANSPORT', 'DAYTON', 'PITT_OHIO']
+    }],
+    blockedCarriers: [{
+      type: String,
+      enum: ['FEDEX_FREIGHT', 'OLD_DOMINION', 'XPO', 'ESTES', 'RL_CARRIERS', 
+             'TFORCE', 'SAIA', 'ABF', 'SEFL', 'AVERITT', 'FEDEX_EXPRESS', 
+             'UPS', 'CENTRAL_TRANSPORT', 'DAYTON', 'PITT_OHIO']
+    }],
+    useOwnAccountsFirst: { type: Boolean, default: false },
+    showBothOptions: { type: Boolean, default: true },  // Show both company and customer rates
+    autoSelectCheapest: { type: Boolean, default: false },
+    maxCarriersToShow: { type: Number, default: 10 }
+  },
+  
   active: { type: Boolean, default: true }
 }, {
   timestamps: true
