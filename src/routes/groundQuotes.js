@@ -140,4 +140,4 @@ async function processGroundQuote(requestId) {
   }
 }
 
-module.exports = router;
+module.exports = { processGroundQuote };
