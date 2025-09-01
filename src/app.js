@@ -24,6 +24,7 @@ const registryRoutes = require('./routes/registry');
 const bookingRoutes = require('./routes/bookings');
 const groundQuoteRoutes = require('./routes/groundQuotes');
 const bolRoutes = require('./routes/bols');
+const carrierAccountRoutes = require('./routes/carrierAccounts');
 
 // ✅ NEW: sequences & storage
 const sequenceRoutes = require('./routes/sequences');
@@ -40,6 +41,7 @@ app.use('/api/apps/registry', registryRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/ground-quotes', groundQuoteRoutes);
 app.use('/api/bols', bolRoutes);
+app.use('/api/carrier-accounts', carrierAccountRoutes); 
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
