@@ -27,23 +27,37 @@ const companySchema = new mongoose.Schema({
   },
   
   // MARKUP CONFIGURATION PER COMPANY
-  markupRules: [{
-    provider: {
-      type: String,
-      enum: ['FreightForce', 'Pelicargo', 'ECULines', 'ALL'],
-      default: 'ALL'
-    },
-    mode: {
-      type: String,
-      enum: ['air', 'ocean', 'road', 'all'],
-      default: 'all'
-    },
-    percentage: { type: Number, default: 0 },
-    minimumMarkup: { type: Number, default: 0 },
-    maximumMarkup: { type: Number, default: 999999 },
-    flatFee: { type: Number, default: 0 },
-    active: { type: Boolean, default: true }
-  }],
+// src/models/Company.js - Update the markupRules provider enum
+    markupRules: [{
+      provider: {
+        type: String,
+        enum: [
+          // API Providers
+          'FreightForce', 'Pelicargo', 'ECULines',
+          // Ground Carriers  
+          'STG', 'SEFL', 'FEDEX_FREIGHT', 'OLD_DOMINION',
+          'XPO', 'ESTES', 'RL_CARRIERS', 'TFORCE',
+          'SAIA', 'ABF', 'AVERITT',
+          // Parcel
+          'FEDEX_EXPRESS', 'UPS',
+          // Regional
+          'CENTRAL_TRANSPORT', 'DAYTON', 'PITT_OHIO',
+          // Catch-all
+          'ALL'
+        ],
+        default: 'ALL'
+      },
+      mode: {
+        type: String,
+        enum: ['air', 'ocean', 'road', 'all'],
+        default: 'all'
+      },
+      percentage: { type: Number, default: 0 },
+      minimumMarkup: { type: Number, default: 0 },
+      maximumMarkup: { type: Number, default: 999999 },
+      flatFee: { type: Number, default: 0 },
+      active: { type: Boolean, default: true }
+    }],
   
   // Additional fees this company sees
   additionalFees: [{
