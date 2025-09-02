@@ -11,7 +11,7 @@ router.post('/create', async (req, res) => {
   try {
     console.log('📦 Creating ground quote request...');
     const { serviceType, formData } = req.body;
-    
+
     const groundRequest = new GroundRequest({
       userId: req.user?._id || '000000000000000000000000',
       userEmail: req.user?.email || 'test@example.com',
@@ -51,13 +51,13 @@ router.post('/create', async (req, res) => {
       },
       status: 'pending'
     });
-    
+
     await groundRequest.save();
     console.log('✅ Ground request created:', groundRequest.requestNumber);
-    
+
     // Start async processing
     processGroundQuote(groundRequest._id);
-    
+
     res.json({
       success: true,
       data: {
@@ -67,7 +67,7 @@ router.post('/create', async (req, res) => {
         message: 'Fetching rates from carriers...'
       }
     });
-    
+
   } catch (error) {
     console.error('❌ Ground quote creation error:', error);
     res.status(500).json({
@@ -77,33 +77,55 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// Get quote results
+// Get quote results (apply markup at view time)
 router.get('/results/:requestId', async (req, res) => {
   try {
     const request = await GroundRequest.findById(req.params.requestId);
     if (!request) {
       return res.status(404).json({ success: false, error: 'Request not found' });
     }
-    
-    const quotes = await GroundQuote.find({ 
+
+    const quotes = await GroundQuote.find({
       requestId: req.params.requestId,
       status: 'active'
     }).sort('ranking.position');
-    
+
+    // Apply markup based on the user viewing the quotes
+    const MarkupCalculator = require('../services/MarkupCalculator');
+
+    const pricedQuotes = await Promise.all(
+      quotes.map(async (quote) => {
+        const pricing = await MarkupCalculator.calculateQuotePrice(
+          quote,
+          req.user?._id || request.userId,
+          req.user?.companyId || request.companyId
+        );
+
+        return {
+          quoteId: quote._id,
+          carrier: quote.carrier.name,
+          carrierCode: quote.carrier.code,
+          service: quote.carrier.service,
+          accountType: quote.carrier.accountType,
+          accountLabel: pricing.isCustomerAccount ? pricing.accountLabel : 'Conship Rates',
+
+          // Pricing based on user role / account type
+          rawCost: pricing.showingDirectCost ? quote.rawCost.total : undefined,
+          price: pricing.total,
+          markup: pricing.showingDirectCost ? pricing.markupAmount : undefined,
+          additionalFees: pricing.additionalFees,
+
+          transitDays: quote.transit.businessDays,
+          guaranteed: quote.transit.guaranteed
+        };
+      })
+    );
+
     res.json({
       success: true,
       status: request.status,
       requestNumber: request.requestNumber,
-      quotes: quotes.map(q => ({
-        quoteId: q._id,
-        carrier: q.carrier.name,
-        service: q.carrier.service,
-        price: q.customerPrice.total,
-        rawCost: q.rawCost.total,
-        markup: q.markup.totalMarkup,
-        transitDays: q.transit.businessDays,
-        guaranteed: q.transit.guaranteed
-      }))
+      quotes: pricedQuotes
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
