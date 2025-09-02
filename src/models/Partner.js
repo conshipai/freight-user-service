@@ -35,7 +35,7 @@ const partnerSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
-    required: true
+    required: fasle
   },
   email: {
     type: String,
