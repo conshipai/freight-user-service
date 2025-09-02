@@ -39,8 +39,16 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ error: 'Account is suspended. Please contact administrator.' });
     }
 
+    // DEBUG: Check what we're getting
+    console.log('User password hash:', user.password);
+    console.log('Password being tested:', password);
+    console.log('Hash exists?', !!user.password);
+    console.log('Hash length:', user.password ? user.password.length : 0);
+
     // Verify password against hashed password in database
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log('Password comparison result:', isPasswordValid);
+
     if (!isPasswordValid) {
       console.log('Invalid password for user:', email);
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -100,7 +108,15 @@ router.post('/test-token', async (req, res) => {
       return res.status(403).json({ error: 'Account is suspended. Please contact administrator.' });
     }
 
+    // DEBUG: Check what we're getting
+    console.log('User password hash:', user.password);
+    console.log('Password being tested:', password);
+    console.log('Hash exists?', !!user.password);
+    console.log('Hash length:', user.password ? user.password.length : 0);
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log('Password comparison result:', isPasswordValid);
+
     if (!isPasswordValid) {
       console.log('Invalid password for user:', email);
       return res.status(401).json({ error: 'Invalid email or password' });
