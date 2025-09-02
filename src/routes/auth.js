@@ -46,6 +46,10 @@ router.post('/login', async (req, res) => {
     console.log('Hash length:', user.password ? user.password.length : 0);
 
     // Verify password against hashed password in database
+    console.log('DEBUG: User found:', user.email);
+    console.log('DEBUG: Password from frontend:', password);
+    console.log('DEBUG: Password hash from DB:', user.password);
+    console.log('DEBUG: Hash exists?', !!user.password);
     const isPasswordValid = await bcrypt.compare(password, user.password);
     console.log('Password comparison result:', isPasswordValid);
 
