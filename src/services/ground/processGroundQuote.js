@@ -4,14 +4,14 @@
  * Drop-in: parallel ground rating via GroundProviderFactory with customer/company accounts.
  * - Uses GroundProviderFactory.getRatesWithCustomerAccounts(...)
  * - Handles accessorials as a NUMBER (matching updated GroundCost model)
- * - Applies markup only when rate.requiresMarkup is true (company rates)
+ * - ❗ Stores RAW COSTS ONLY — markup is NOT applied here (calculated at display time)
  */
 
 const GroundRequest = require('../../models/GroundRequest');
 const GroundCost    = require('../../models/GroundCost');
 const GroundQuote   = require('../../models/GroundQuote');
 
-// NEW: include customer/company carrier account context
+// NEW: include customer/company carrier account context (kept for future use)
 const CarrierAccount = require('../../models/CarrierAccount');
 
 // provider fan-out
@@ -59,7 +59,7 @@ async function processGroundQuote(requestId) {
 
     console.log('📦 Request data prepared, calling carriers...');
 
-    // NEW: include customer/company account resolution inside the factory
+    // Include customer/company account resolution inside the factory
     const carrierRates = await GroundProviderFactory.getRatesWithCustomerAccounts(
       carrierRequestData,
       request.userId,
@@ -88,7 +88,7 @@ async function processGroundQuote(requestId) {
         const transitDays   = Number(rate.transitDays || 0);
         const guaranteed    = Boolean(rate.guaranteed || false);
 
-        // Save cost
+        // Save raw cost
         const cost = new GroundCost({
           requestId,
           provider: rate.provider || 'unknown',
@@ -116,41 +116,36 @@ async function processGroundQuote(requestId) {
         });
         await cost.save();
 
-        // Apply markup only for company rates (requiresMarkup indicates markups should be added)
-        let markupAmount = 0;
-        let markupPercentage = 0;
-        if (rate.requiresMarkup) {
-          markupPercentage = 18; // TODO: load from company/user settings
-          markupAmount = totalCost * (markupPercentage / 100);
-        }
-
-        // Save quote
+        // Store raw costs only — markup will be calculated at display time
         const quote = new GroundQuote({
           requestId,
           costId: cost._id,
           userId: request.userId,
+          companyId: request.companyId, // Make sure this is set!
           carrier: {
             name: rate.carrierName || 'Unknown Carrier',
             code: rate.provider || 'unknown',
             service: rate.service || request.serviceType || 'standard',
-            accountType: rate.accountType,
-            accountName: rate.accountName
+            accountType: rate.accountType, // 'customer' or 'company'
+            accountName: rate.accountName  // 'Your FedEx Account' etc
           },
           rawCost: {
             baseFreight,
             fuelSurcharge,
-            accessorials: accTotal,    // keep numeric in the quote too
+            accessorials: accTotal,
             total: totalCost
           },
+          // Remove markup calculation here - just store placeholder
           markup: {
             type: 'percentage',
-            percentage: markupPercentage,
-            totalMarkup: markupAmount
+            percentage: 0,
+            totalMarkup: 0
           },
+          // Store raw cost as customer price temporarily
           customerPrice: {
-            subtotal: totalCost + markupAmount,
+            subtotal: totalCost,
             fees: 0,
-            total: totalCost + markupAmount
+            total: totalCost
           },
           transit: {
             businessDays: transitDays,
@@ -161,12 +156,12 @@ async function processGroundQuote(requestId) {
         });
         await quote.save();
 
-        const displayPrice =
+        const tag =
           rate.accountType === 'customer'
-            ? `$${quote.rawCost.total.toFixed(2)} (Your Account)`
-            : `$${quote.customerPrice.total.toFixed(2)}`;
+            ? 'Your Account'
+            : 'Company Account';
 
-        console.log(`💰 Saved quote from ${quote.carrier.name}: ${displayPrice}`);
+        console.log(`💰 Saved quote from ${quote.carrier.name}: $${quote.rawCost.total.toFixed(2)} (${tag})`);
       } catch (rateError) {
         console.error(`❌ Error processing rate from ${rate.provider}:`, rateError?.message || rateError);
       }
