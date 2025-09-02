@@ -35,7 +35,7 @@ router.post('/create', authorize(['system_admin']), async (req, res) => {
     // Create main user
     const user = await User.create({
       ...mainUser,
-      role: 'company_admin',
+      role: companyInfo.type === 'customer' ? 'customer' : 'foreign_partner',
       companyId: company._id
     });
     
