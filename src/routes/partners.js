@@ -85,15 +85,14 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
     
     // Create user account for partner
     const user = new User({
-      email: contactEmail,
-      password: await bcrypt.hash(tempPassword, 10),
-      name: contactName,
-      role: type, // 'customer' or 'foreign_partner'
-      companyId: partner._id,
-      partnerId: partner._id, // Link to partner
-      mustChangePassword: true, // Flag to force password change on first login
-      active: true
-    });
+    email: contactEmail,
+    password: await bcrypt.hash(tempPassword, 10),
+    name: contactName,
+    role: 'partner_admin', // ← CORRECT ROLE
+    partnerId: partner._id, // ← ONLY THIS, remove companyId
+    mustChangePassword: true,
+    active: true
+  });
     
     await user.save();
     
