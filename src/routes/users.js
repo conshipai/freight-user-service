@@ -1,9 +1,37 @@
+// src/routes/users.js
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const Company = require('../models/Company');
+const Partner = require('../models/Partner');
 const { authorize } = require('../middleware/authorize');
-const { PERMISSION_HIERARCHY } = require('../config/permissions');
+
+// Define permissions here since config file doesn't exist
+const PERMISSION_HIERARCHY = {
+  system_admin: {
+    canManage: ['conship_employee', 'partner_admin', 'partner_user', 'vendor_admin', 'vendor_user'],
+    defaultModules: ['all']
+  },
+  conship_employee: {
+    canManage: ['partner_user'],
+    defaultModules: ['quotes', 'tracking', 'reports']
+  },
+  partner_admin: {
+    canManage: ['partner_user'],
+    defaultModules: ['quotes', 'tracking']
+  },
+  partner_user: {
+    canManage: [],
+    defaultModules: ['quotes', 'tracking']
+  },
+  vendor_admin: {
+    canManage: ['vendor_user'],
+    defaultModules: ['rates', 'shipments']
+  },
+  vendor_user: {
+    canManage: [],
+    defaultModules: ['shipments']
+  }
+};
 
 // ─────────────────────────────────────────────────────────────
 // Get current user (no password)
@@ -12,7 +40,7 @@ router.get('/me', authorize(), async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
       .select('-password')
-      .populate('companyId');
+      .populate('partnerId');
     res.json({ success: true, user });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -20,61 +48,69 @@ router.get('/me', authorize(), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Create user with company management
+// Create user with partner management (UPDATED)
 // ─────────────────────────────────────────────────────────────
-router.post('/', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
+// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
+router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { email, password, name, role, company: companyName } = req.body;
     const requestingUser = req.user;
-    
+
     // Check if requesting user can create this role
     const canCreate = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(role);
     if (!canCreate && requestingUser.role !== 'system_admin') {
       return res.status(403).json({ error: 'Not authorized to create this user type' });
     }
-    
-    // Handle company assignment
-    let companyId = requestingUser.companyId; // Default to requester's company
-    
+
+    // Handle partner assignment (UPDATED)
+    let partnerId = requestingUser.partnerId; // Default to requester's partner
+
     if (requestingUser.role === 'system_admin' && companyName) {
-      // Admin can create/assign companies
-      let company = await Company.findOne({ name: companyName });
-      if (!company) {
-        // Determine company type based on role
-        const companyType = role === 'customer' ? 'customer' : 
-                          role === 'foreign_partner' ? 'foreign_partner' : 'conship';
-        
-        company = await Company.create({
-          name: companyName,
-          type: companyType,
-          active: true
+      // Admin can create/assign partners
+      let partner = await Partner.findOne({ companyName: companyName });
+      if (!partner) {
+        // Create new partner if doesn't exist
+        const partnerType = ['partner_admin', 'partner_user'].includes(role) ? 'customer' :
+                            ['vendor_admin', 'vendor_user'].includes(role) ? 'vendor' :
+                            'foreign_partner';
+
+        partner = await Partner.create({
+          companyName: companyName,
+          companyCode: companyName.substring(0, 4).toUpperCase(),
+          type: partnerType,
+          country: 'USA', // TODO: make dynamic as needed
+          phone: 'pending',
+          email: email,
+          status: 'approved'
         });
       }
-      companyId = company._id;
+      partnerId = partner._id;
     }
-    
+
     const user = new User({
       email,
       password,
       name,
       role,
-      companyId,
+      partnerId,
       parentAccountId: role.includes('_user') ? requestingUser._id : null,
+      // If your schema still uses 'modules', you can set defaults here from PERMISSION_HIERARCHY.
+      // If not, feel free to remove the next line.
       modules: PERMISSION_HIERARCHY[role]?.defaultModules || [],
-      active: true
+      active: true // keep as-is per your instruction block
     });
 
     await user.save();
-    await user.populate('companyId');
-    
-    // If this is a primary customer/partner, set them as company's primary contact
-    if ((role === 'customer' || role === 'foreign_partner') && companyId) {
-      await Company.findByIdAndUpdate(companyId, { primaryContactId: user._id });
+    await user.populate('partnerId');
+
+    // Update partner's primary contact if this is an admin (UPDATED)
+    if (role === 'partner_admin' && partnerId) {
+      await Partner.findByIdAndUpdate(partnerId, { primaryContactId: user._id });
     }
-    
+
     const userObj = user.toObject();
     delete userObj.password;
-    
+
     res.status(201).json({ success: true, user: userObj });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -82,29 +118,29 @@ router.post('/', authorize(['system_admin', 'customer', 'foreign_partner']), asy
 });
 
 // ─────────────────────────────────────────────────────────────
-// Get managed users with company filtering
+// Get managed users with partner filtering (UPDATED)
 // ─────────────────────────────────────────────────────────────
 router.get('/managed', authorize(), async (req, res) => {
   try {
     const requestingUser = req.user;
     const canManageRoles = PERMISSION_HIERARCHY[requestingUser.role]?.canManage || [];
-    
+
     const query = {
       $or: [
         { role: { $in: canManageRoles } },
         { parentAccountId: requestingUser._id }
       ]
     };
-    
-    // If not admin, only see users from same company
-    if (requestingUser.role !== 'system_admin' && requestingUser.companyId) {
-      query.companyId = requestingUser.companyId;
+
+    // If not admin, only see users from same partner (UPDATED)
+    if (requestingUser.role !== 'system_admin' && requestingUser.partnerId) {
+      query.partnerId = requestingUser.partnerId;
     }
-    
+
     const users = await User.find(query)
       .select('-password')
-      .populate('companyId');
-    
+      .populate('partnerId');
+
     res.json({ success: true, users });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -112,37 +148,39 @@ router.get('/managed', authorize(), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Update user modules
+// Update user modules (kept; adjust if moving to permissions-only model)
 // ─────────────────────────────────────────────────────────────
-router.put('/:userId/modules', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
+// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
+router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
     const { modules } = req.body;
     const requestingUser = req.user;
-    
+
     const targetUser = await User.findById(userId);
     if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     // Check permission to modify this user
     const canManage = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(targetUser.role) ||
                       targetUser.parentAccountId?.toString() === requestingUser._id.toString() ||
                       requestingUser.role === 'system_admin';
-                      
+
     if (!canManage) {
       return res.status(403).json({ error: 'Not authorized to modify this user' });
     }
-    
+
     // Convert module IDs to full module objects
-    targetUser.modules = modules.map(moduleId => ({
+    // NOTE: If using the new User schema without 'modules', consider mapping to 'permissions' instead.
+    targetUser.modules = (modules || []).map(moduleId => ({
       moduleId,
       name: getModuleName(moduleId),
       permissions: ['read', 'write'],
       grantedBy: requestingUser._id,
       grantedAt: new Date()
     }));
-    
+
     await targetUser.save();
     res.json({ success: true, user: targetUser });
   } catch (error) {
@@ -151,37 +189,41 @@ router.put('/:userId/modules', authorize(['system_admin', 'customer', 'foreign_p
 });
 
 // ─────────────────────────────────────────────────────────────
-// Suspend/Activate user
+// Suspend/Activate user (uses same-Partner check) (UPDATED ROLES)
 // ─────────────────────────────────────────────────────────────
-router.put('/:userId/status', authorize(['system_admin', 'customer', 'foreign_partner']), async (req, res) => {
+// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
+router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
     const { active } = req.body;
-    
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     const requestingUser = req.user;
-    
+
     // Check permissions
-    const canManage = requestingUser.role === 'system_admin' || 
-                      user.parentAccountId?.toString() === requestingUser._id.toString() ||
-                      (requestingUser.companyId?.toString() === user.companyId?.toString() && 
-                       ['customer', 'foreign_partner'].includes(requestingUser.role));
-    
+    const canManage =
+      requestingUser.role === 'system_admin' ||
+      user.parentAccountId?.toString() === requestingUser._id.toString() ||
+      (
+        requestingUser.partnerId?.toString() === user.partnerId?.toString() &&
+        ['partner_admin', 'vendor_admin'].includes(requestingUser.role)
+      );
+
     if (!canManage) {
       return res.status(403).json({ error: 'Not authorized to change this user status' });
     }
-    
-    user.active = active;
+
+    user.active = active; // if using status field instead, convert here.
     await user.save();
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: `User ${active ? 'activated' : 'suspended'} successfully`,
-      user 
+      user
     });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -194,17 +236,17 @@ router.put('/:userId/status', authorize(['system_admin', 'customer', 'foreign_pa
 router.delete('/:userId', authorize(['system_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
-    
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     // Only allow deleting inactive users
     if (user.active) {
       return res.status(400).json({ error: 'Cannot delete active user. Suspend first.' });
     }
-    
+
     await user.deleteOne();
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
@@ -215,12 +257,15 @@ router.delete('/:userId', authorize(['system_admin']), async (req, res) => {
 // Helper function to get module names
 function getModuleName(moduleId) {
   const moduleNames = {
-    'quotes': 'Quotes & Pricing',
-    'tracking': 'Shipment Tracking',
-    'analytics': 'Analytics & Reports',
-    'users': 'User Management',
-    'billing': 'Billing & Invoicing',
-    'inventory': 'Inventory Management'
+    quotes: 'Quotes & Pricing',
+    tracking: 'Shipment Tracking',
+    analytics: 'Analytics & Reports',
+    users: 'User Management',
+    billing: 'Billing & Invoicing',
+    inventory: 'Inventory Management',
+    rates: 'Vendor Rates',
+    shipments: 'Vendor Shipments',
+    reports: 'Reports'
   };
   return moduleNames[moduleId] || moduleId;
 }
