@@ -145,4 +145,50 @@ router.get('/results/:requestId', authorize(), blockForeignPartners, async (req,
   }
 });
 
+/* ------------------------- NEW: Recent Ground Quotes ------------------------- */
+// Get recent ground quotes for dashboard
+router.get('/recent', authorize(), blockForeignPartners, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    // Get recent requests for the current user or all if admin
+    const query = {};
+    if (req.user.role !== 'system_admin') {
+      query.userId = req.user._id;
+    }
+
+    const requests = await GroundRequest.find(query)
+      .sort('-createdAt')
+      .limit(parseInt(limit, 10))
+      .lean();
+
+    // For each request, get the quote count
+    const requestsWithQuotes = await Promise.all(
+      requests.map(async (request) => {
+        const quoteCount = await GroundQuote.countDocuments({
+          requestId: request._id,
+          status: 'active'
+        });
+
+        return {
+          ...request,
+          quoteCount
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      requests: requestsWithQuotes
+    });
+  } catch (error) {
+    console.error('Error fetching recent quotes:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+/* --------------------------------------------------------------------------- */
+
 module.exports = router;
