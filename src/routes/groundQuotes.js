@@ -6,8 +6,20 @@ const GroundCost = require('../models/GroundCost');
 const GroundQuote = require('../models/GroundQuote');
 const { processGroundQuote } = require('../services/ground/processGroundQuote');
 
+/** Middleware: block foreign partners from using Ground quotes */
+function blockForeignPartners(req, res, next) {
+  const role = req.user?.role;
+  if (role === 'foreign_partner' || role === 'foreign_partner_user') {
+    return res.status(403).json({
+      success: false,
+      error: 'Ground quotes are not available for foreign partners. Please use Air or Ocean quote modules.'
+    });
+  }
+  return next();
+}
+
 // Create a new ground quote request
-router.post('/create', async (req, res) => {
+router.post('/create', blockForeignPartners, async (req, res) => {
   try {
     console.log('📦 Creating ground quote request...');
     const { serviceType, formData } = req.body;
@@ -55,7 +67,7 @@ router.post('/create', async (req, res) => {
     await groundRequest.save();
     console.log('✅ Ground request created:', groundRequest.requestNumber);
 
-    // Start async processing
+    // Kick off async processing
     processGroundQuote(groundRequest._id);
 
     res.json({
@@ -78,7 +90,7 @@ router.post('/create', async (req, res) => {
 });
 
 // Get quote results (apply markup at view time)
-router.get('/results/:requestId', async (req, res) => {
+router.get('/results/:requestId', blockForeignPartners, async (req, res) => {
   try {
     const request = await GroundRequest.findById(req.params.requestId);
     if (!request) {
@@ -109,7 +121,7 @@ router.get('/results/:requestId', async (req, res) => {
           accountType: quote.carrier.accountType,
           accountLabel: pricing.isCustomerAccount ? pricing.accountLabel : 'Conship Rates',
 
-          // Pricing based on user role / account type
+          // Pricing visibility based on role / account type
           rawCost: pricing.showingDirectCost ? quote.rawCost.total : undefined,
           price: pricing.total,
           markup: pricing.showingDirectCost ? pricing.markupAmount : undefined,
