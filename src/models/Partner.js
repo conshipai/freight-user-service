@@ -157,4 +157,29 @@ const partnerSchema = new mongoose.Schema({
     timezone: String,
     monday: { open: String, close: String },
     tuesday: { open: String, close: String },
-    wednesday: { open: String, close: String
+    wednesday: { open: String, close: String },
+    thursday: { open: String, close: String },
+    friday: { open: String, close: String },
+    saturday: { open: String, close: String },
+    sunday: { open: String, close: String }
+  },
+  
+  // Metadata
+  approvedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  approvedAt: Date,
+  notes: String
+  
+}, {
+  timestamps: true
+});
+
+// Indexes for better query performance
+partnerSchema.index({ companyCode: 1 });
+partnerSchema.index({ country: 1 });
+partnerSchema.index({ status: 1 });
+partnerSchema.index({ type: 1 });
+
+module.exports = mongoose.model('Partner', partnerSchema);
