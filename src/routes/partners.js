@@ -212,6 +212,14 @@ router.put('/:id', authorize(['system_admin']), async (req, res) => {
     
     await partner.save();
     
+    // ADD THIS: If email was updated, also update the User record
+    if (req.body.email) {
+      await User.findOneAndUpdate(
+        { partnerId: partner._id },
+        { email: req.body.email }
+      );
+    }
+    
     res.json({ 
       success: true, 
       message: 'Partner updated successfully',
