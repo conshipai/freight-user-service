@@ -1,17 +1,19 @@
 /**
  * services/ground/processGroundQuote.js
  *
- * Drop-in: parallel ground rating via GroundProviderFactory with customer/company accounts.
+ * Parallel ground rating via GroundProviderFactory with customer/company accounts.
  * - Uses GroundProviderFactory.getRatesWithCustomerAccounts(...)
  * - Handles accessorials as a NUMBER (matching updated GroundCost model)
- * - ❗ Stores RAW COSTS ONLY — markup is NOT applied here (calculated at display time)
+ * - 💸 Applies company/customer markup rules here and stores customer totals
  */
 
 const GroundRequest = require('../../models/GroundRequest');
 const GroundCost    = require('../../models/GroundCost');
 const GroundQuote   = require('../../models/GroundQuote');
+const User          = require('../../models/User');
+const Company       = require('../../models/Company');
 
-// NEW: include customer/company carrier account context (kept for future use)
+// Kept for future account-context features
 const CarrierAccount = require('../../models/CarrierAccount');
 
 // provider fan-out
@@ -24,7 +26,6 @@ function toAccessorialsNumber(accessorialCharges) {
     return accessorialCharges.reduce((sum, ch) => sum + Number(ch?.amount ?? 0), 0);
   }
   if (accessorialCharges && typeof accessorialCharges === 'object') {
-    // handle map/object form { code: { amount }, ... } OR { code: number }
     return Object.values(accessorialCharges).reduce((sum, v) => {
       if (typeof v === 'number') return sum + v;
       if (v && typeof v === 'object') return sum + Number(v.amount ?? 0);
@@ -35,8 +36,7 @@ function toAccessorialsNumber(accessorialCharges) {
 }
 
 /**
- * Kick off rating for a ground (LTL) request and persist results.
- * Supports both company accounts and customer-linked accounts via ProviderFactory.
+ * Kick off rating for a ground (LTL) request and persist results (with markup).
  * @param {string} requestId - Mongo _id of the GroundRequest
  */
 async function processGroundQuote(requestId) {
@@ -77,6 +77,21 @@ async function processGroundQuote(requestId) {
       return;
     }
 
+    // Preload user + company (for markup rules)
+    let user = null;
+    let company = null;
+
+    if (request.userId && request.userId.toString() !== '000000000000000000000000') {
+      try {
+        user = await User.findById(request.userId);
+        if (user?.companyId) {
+          company = await Company.findById(user.companyId);
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not resolve user/company for markup rules:', e?.message || e);
+      }
+    }
+
     for (const rate of carrierRates) {
       try {
         // Normalize/defend numbers
@@ -88,7 +103,7 @@ async function processGroundQuote(requestId) {
         const transitDays   = Number(rate.transitDays || 0);
         const guaranteed    = Boolean(rate.guaranteed || false);
 
-        // Save raw cost
+        // Save RAW cost (always)
         const cost = new GroundCost({
           requestId,
           provider: rate.provider || 'unknown',
@@ -99,7 +114,7 @@ async function processGroundQuote(requestId) {
             baseFreight,
             fuelSurcharge,
             accessorials: accTotal,         // numeric field per updated model
-            totalAccessorials: accTotal,    // optional: keep this in sync
+            totalAccessorials: accTotal,
             totalCost,
             currency: 'USD'
           },
@@ -116,7 +131,38 @@ async function processGroundQuote(requestId) {
         });
         await cost.save();
 
-        // Store raw costs only — markup will be calculated at display time
+        // === Apply markup/admin fee per your rules ===
+        let markupPercentage = 18; // default
+        let adminFee = 0;
+
+        if (user?.companyId && company?.markupRules) {
+          // Find specific carrier markup or use ALL
+          const carrierRule = company.markupRules.find(
+            (r) => r.provider === rate.provider && r.active
+          );
+          const defaultRule = company.markupRules.find(
+            (r) => r.provider === 'ALL' && r.active
+          );
+
+          if (carrierRule) {
+            markupPercentage = carrierRule.percentage || 18;
+            adminFee = carrierRule.flatFee || 0;
+          } else if (defaultRule) {
+            markupPercentage = defaultRule.percentage || 18;
+            adminFee = defaultRule.flatFee || 0;
+          }
+
+          // Add $50 admin fee for ground shipments
+          adminFee += 50;
+        } else {
+          // Even without company rules, still add $50 ground fee
+          adminFee += 50;
+        }
+
+        const markupAmount  = totalCost * (markupPercentage / 100);
+        const customerTotal = totalCost + markupAmount + adminFee;
+
+        // Store quote WITH markup applied
         const quote = new GroundQuote({
           requestId,
           costId: cost._id,
@@ -127,7 +173,7 @@ async function processGroundQuote(requestId) {
             code: rate.provider || 'unknown',
             service: rate.service || request.serviceType || 'standard',
             accountType: rate.accountType, // 'customer' or 'company'
-            accountName: rate.accountName  // 'Your FedEx Account' etc
+            accountName: rate.accountName  // e.g. 'Your FedEx Account'
           },
           rawCost: {
             baseFreight,
@@ -135,17 +181,15 @@ async function processGroundQuote(requestId) {
             accessorials: accTotal,
             total: totalCost
           },
-          // Remove markup calculation here - just store placeholder
           markup: {
             type: 'percentage',
-            percentage: 0,
-            totalMarkup: 0
+            percentage: markupPercentage,
+            totalMarkup: markupAmount
           },
-          // Store raw cost as customer price temporarily
           customerPrice: {
-            subtotal: totalCost,
-            fees: 0,
-            total: totalCost
+            subtotal: totalCost + markupAmount,
+            fees: adminFee,
+            total: customerTotal
           },
           transit: {
             businessDays: transitDays,
@@ -161,7 +205,11 @@ async function processGroundQuote(requestId) {
             ? 'Your Account'
             : 'Company Account';
 
-        console.log(`💰 Saved quote from ${quote.carrier.name}: $${quote.rawCost.total.toFixed(2)} (${tag})`);
+        console.log(
+          `💰 Saved quote from ${quote.carrier.name}: raw $${quote.rawCost.total.toFixed(
+            2
+          )} → customer $${quote.customerPrice.total.toFixed(2)} (${tag})`
+        );
       } catch (rateError) {
         console.error(`❌ Error processing rate from ${rate.provider}:`, rateError?.message || rateError);
       }
