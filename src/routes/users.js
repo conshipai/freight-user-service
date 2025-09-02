@@ -34,29 +34,29 @@ const PERMISSION_HIERARCHY = {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Get current user (no password)
+// Get current user (no password)  ✅ FIXED
 // ─────────────────────────────────────────────────────────────
 router.get('/me', authorize(), async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      console.log('User found:', user ? 'Yes' : 'No');
-if (user) {
-  console.log('User active field:', user.active);
-  console.log('User active type:', typeof user.active);
-  console.log('User status field:', user.status);
-  console.log('Full user object:', JSON.stringify(user.toObject(), null, 2));
-}
-
-if (!user) {
-  console.log('User not found:', email);
-  return res.status(401).json({ 
-    error: 'Invalid email or password' 
-  });
-}
       .select('-password')
       .populate('partnerId');
+
+    console.log('User found:', !!user);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Debug details (safe)
+    console.log('User active field:', user.active);
+    console.log('User active type:', typeof user.active);
+    console.log('User status field:', user.status);
+    // If needed:
+    // console.log('Full user object:', JSON.stringify(user.toObject(), null, 2));
+
     res.json({ success: true, user });
   } catch (error) {
+    console.error('GET /me error:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -64,7 +64,6 @@ if (!user) {
 // ─────────────────────────────────────────────────────────────
 // Create user with partner management (UPDATED)
 // ─────────────────────────────────────────────────────────────
-// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
 router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { email, password, name, role, company: companyName } = req.body;
@@ -109,9 +108,8 @@ router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin',
       partnerId,
       parentAccountId: role.includes('_user') ? requestingUser._id : null,
       // If your schema still uses 'modules', you can set defaults here from PERMISSION_HIERARCHY.
-      // If not, feel free to remove the next line.
       modules: PERMISSION_HIERARCHY[role]?.defaultModules || [],
-      active: true // keep as-is per your instruction block
+      active: true
     });
 
     await user.save();
@@ -127,6 +125,7 @@ router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin',
 
     res.status(201).json({ success: true, user: userObj });
   } catch (error) {
+    console.error('POST /users error:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -157,14 +156,14 @@ router.get('/managed', authorize(), async (req, res) => {
 
     res.json({ success: true, users });
   } catch (error) {
+    console.error('GET /managed error:', error);
     res.status(400).json({ error: error.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// Update user modules (kept; adjust if moving to permissions-only model)
+// Update user modules
 // ─────────────────────────────────────────────────────────────
-// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
 router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
@@ -185,8 +184,7 @@ router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'p
       return res.status(403).json({ error: 'Not authorized to modify this user' });
     }
 
-    // Convert module IDs to full module objects
-    // NOTE: If using the new User schema without 'modules', consider mapping to 'permissions' instead.
+    // If your User schema doesn’t include `modules` anymore, map this to permissions instead
     targetUser.modules = (modules || []).map(moduleId => ({
       moduleId,
       name: getModuleName(moduleId),
@@ -198,14 +196,14 @@ router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'p
     await targetUser.save();
     res.json({ success: true, user: targetUser });
   } catch (error) {
+    console.error('PUT /:userId/modules error:', error);
     res.status(400).json({ error: error.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// Suspend/Activate user (uses same-Partner check) (UPDATED ROLES)
+// Suspend/Activate user (uses same-Partner check)
 // ─────────────────────────────────────────────────────────────
-// Was: authorize(['system_admin', 'customer', 'foreign_partner'])
 router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
@@ -218,7 +216,6 @@ router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'pa
 
     const requestingUser = req.user;
 
-    // Check permissions
     const canManage =
       requestingUser.role === 'system_admin' ||
       user.parentAccountId?.toString() === requestingUser._id.toString() ||
@@ -231,7 +228,7 @@ router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'pa
       return res.status(403).json({ error: 'Not authorized to change this user status' });
     }
 
-    user.active = active; // if using status field instead, convert here.
+    user.active = active; // if you switched to `status`, set user.status = active ? 'active' : 'suspended';
     await user.save();
 
     res.json({
@@ -240,6 +237,7 @@ router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'pa
       user
     });
   } catch (error) {
+    console.error('PUT /:userId/status error:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -264,6 +262,7 @@ router.delete('/:userId', authorize(['system_admin']), async (req, res) => {
     await user.deleteOne();
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
+    console.error('DELETE /:userId error:', error);
     res.status(400).json({ error: error.message });
   }
 });
