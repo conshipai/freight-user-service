@@ -86,7 +86,7 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
     // Create user account for partner
     const user = new User({
     email: contactEmail,
-    password: await bcrypt.hash(tempPassword, 10),
+    password: tempPassword,
     name: contactName,
     role: 'partner_admin', // ← CORRECT ROLE
     partnerId: partner._id, // ← ONLY THIS, remove companyId
