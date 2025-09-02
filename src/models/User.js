@@ -1,3 +1,4 @@
+// src/models/User.js
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
@@ -6,7 +7,7 @@ const UserSchema = new Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   name: { type: String, required: true },
-  
+
   // User Role (within their organization)
   role: {
     type: String,
@@ -20,16 +21,16 @@ const UserSchema = new Schema({
     ],
     required: true
   },
-  
+
   // Relationship to Partner
   partnerId: {
     type: Schema.Types.ObjectId,
     ref: 'Partner',
-    required: function() {
+    required: function () {
       return !['system_admin'].includes(this.role);
     }
   },
-  
+
   // Permissions (override defaults based on role)
   permissions: {
     createQuotes: { type: Boolean, default: true },
@@ -41,23 +42,23 @@ const UserSchema = new Schema({
     accessReports: { type: Boolean, default: false },
     manageRates: { type: Boolean, default: false } // For vendors
   },
-  
+
   // User Status
   status: {
     type: String,
     enum: ['active', 'inactive', 'suspended', 'pending'],
     default: 'active'
   },
-  
+
   // Contact Info
   phone: String,
   timezone: String,
   language: { type: String, default: 'en' },
-  
+
   // Activity Tracking
   lastLoginAt: Date,
   loginCount: { type: Number, default: 0 },
-  
+
   // Metadata
   createdAt: { type: Date, default: Date.now },
   createdBy: {
@@ -69,4 +70,5 @@ const UserSchema = new Schema({
     ref: 'User'
   }
 });
+
 module.exports = mongoose.model('User', UserSchema);
