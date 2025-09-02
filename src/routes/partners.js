@@ -288,7 +288,7 @@ router.post('/:id/reset-password', authorize(['system_admin']), async (req, res)
     }
     
     // Find the user account for this partner
-    const user = await User.findOne({ email: partner.email });
+    const user = await User.findOne({ partnerId: partner._id });
     
     if (!user) {
       return res.status(404).json({ error: 'User account not found for this partner' });
