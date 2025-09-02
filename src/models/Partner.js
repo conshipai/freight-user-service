@@ -1,160 +1,79 @@
-const mongoose = require('mongoose');
-
-const partnerSchema = new mongoose.Schema({
-  // Basic Information
-  companyName: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true
-  },
-  companyCode: {
-    type: String,
-    required: true,
-    unique: true,
-    uppercase: true, // e.g., 'DHL', 'KWE', 'CEVA'
-    trim: true
-  },
+const PartnerSchema = new Schema({
+  // Company Information
+  companyName: { type: String, required: true },
+  companyCode: { type: String, unique: true, maxLength: 4 },
   
-  // NEW: Partner Type
-  type: {
+  // Partner Type (determines access and features)
+  partnerType: {
     type: String,
-    enum: ['customer', 'foreign_partner'],
+    enum: [
+      'system',           // Conship itself
+      'foreign_partner',  // Foreign Business Partners (resellers)
+      'customer',         // Direct Business Partners/Customers
+      'vendor'           // Vendors/Carriers (future)
+    ],
     required: true
   },
   
-  country: {
-    type: String,
-    required: true
-  },
-  address: {
-    street: String,
-    city: String,
-    state: String,
-    postalCode: String,
-    country: String
-  },
-  phone: {
-    type: String,
-    required: true
-  },
-  email: {
-    type: String,
-    required: true,
-    lowercase: true
-  },
-  taxVatNumber: String,
+  // Contact Info
+  email: String,
+  phone: String,
+  country: String,
   
   // Status
   status: {
     type: String,
-    enum: ['pending', 'approved', 'suspended', 'inactive'],
-    default: 'pending'
+    enum: ['active', 'inactive', 'suspended'],
+    default: 'active'
   },
   
-  // NEW: API Markup Settings (replaces old markupSettings)
-  apiMarkups: {
-    pelicargo: { type: Number, default: 15 },
-    freightForce: { type: Number, default: 18 },
-    ecuLines: { type: Number, default: 20 }
-  },
-  
-  // NEW: Mode-specific Charges
-  modeCharges: {
-    air: [{
-      name: String,
-      amount: Number
-    }],
-    ocean: [{
-      name: String,
-      amount: Number
-    }],
-    ground: [{
-      name: String,
-      amount: Number
-    }]
-  },
-  
-  // NEW: Modules the partner has access to
-  modules: [{
-    type: String,
-    default: ['Pricing Portal']
-  }],
-  
-  // Additional Fees (keeping this from original)
-  additionalFees: [{
-    name: String,        // e.g., "AWB Fee", "Documentation"
-    amount: Number,      // e.g., 35
-    serviceType: {
-      type: String,
-      enum: ['air', 'ocean', 'road', 'all']
+  // Pricing Configuration (not applicable to vendors)
+  pricingConfig: {
+    showTrueCost: { type: Boolean, default: false },
+    defaultMarkups: {
+      ground: Number,
+      air: Number,
+      ocean: Number
     },
-    feeType: {
-      type: String,
-      enum: ['fixed', 'percentage'],
-      default: 'fixed'
+    vendorOverrides: {
+      type: Map,
+      of: Number
     },
-    active: { type: Boolean, default: true }
-  }],
-  
-  // KYC/Compliance
-  kycStatus: {
-    type: String,
-    enum: ['pending', 'verified', 'rejected'],
-    default: 'pending'
-  },
-  kycDocuments: [{
-    documentType: String, // 'business_license', 'tax_certificate', etc.
-    fileName: String,
-    uploadedAt: Date,
-    verifiedAt: Date
-  }],
-  
-  // Finance Information
-  paymentTerms: {
-    type: String,
-    default: 'NET30'
-  },
-  currency: {
-    type: String,
-    default: 'USD'
-  },
-  bankDetails: {
-    bankName: String,
-    accountNumber: String,
-    routingNumber: String,
-    swiftCode: String,
-    iban: String
+    additionalCharges: {
+      ground: [/* ... */],
+      air: [/* ... */],
+      ocean: [/* ... */]
+    }
   },
   
-  // Operational Details
-  operatingHours: {
-    timezone: String,
-    monday: { open: String, close: String },
-    tuesday: { open: String, close: String },
-    wednesday: { open: String, close: String },
-    thursday: { open: String, close: String },
-    friday: { open: String, close: String },
-    saturday: { open: String, close: String },
-    sunday: { open: String, close: String }
+  // User Management
+  userLimit: { type: Number, default: 5 }, // Max sub-users
+  primaryContactId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  
+  // Feature Access
+  features: {
+    quoting: { type: Boolean, default: true },
+    booking: { type: Boolean, default: false },
+    tracking: { type: Boolean, default: true },
+    reporting: { type: Boolean, default: false },
+    rateManagement: { type: Boolean, default: false }, // For vendors
+    invoicing: { type: Boolean, default: false }
+  },
+  
+  // Relationships
+  parentPartnerId: {  // For sub-partners or franchises
+    type: Schema.Types.ObjectId,
+    ref: 'Partner'
   },
   
   // Metadata
-  approvedBy: {
-    type: mongoose.Schema.Types.ObjectId,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  createdBy: {
+    type: Schema.Types.ObjectId,
     ref: 'User'
-  },
-  approvedAt: Date,
-  notes: String,
-  
-}, {
-  timestamps: true
+  }
 });
-
-// Indexes for better query performance
-partnerSchema.index({ companyCode: 1 });
-partnerSchema.index({ country: 1 });
-partnerSchema.index({ status: 1 });
-partnerSchema.index({ type: 1 }); // NEW index for partner type
-
-module.exports = mongoose.model('Partner', partnerSchema);
