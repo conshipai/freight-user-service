@@ -198,7 +198,7 @@ router.put('/:id', authorize(['system_admin']), async (req, res) => {
     
     // Update allowed fields
     const allowedUpdates = [
-      'companyName', 'country', 'phone', 'address', 
+      'companyName', 'country', 'phone', 'email', 'address', 
       'apiMarkups', 'modeCharges', 'modules', 
       'additionalFees', 'status', 'paymentTerms', 
       'currency', 'notes'
@@ -265,7 +265,7 @@ router.delete('/:id', authorize(['system_admin']), async (req, res) => {
     await User.deleteMany({ partnerId: partner._id });
     
     // Delete partner
-    await partner.remove();
+    await Partner.findByIdAndDelete(req.params.id);
     
     res.json({ 
       success: true, 
