@@ -4,7 +4,9 @@
  * Parallel ground rating via GroundProviderFactory with customer/company accounts.
  * - Uses GroundProviderFactory.getRatesWithCustomerAccounts(...)
  * - Handles accessorials as a NUMBER (matching updated GroundCost model)
- * - 💸 Applies company/customer markup rules here and stores customer totals
+ * - 💸 Markup logic:
+ *     • system_admin / conship_employee  -> NO MARKUP (raw costs only)
+ *     • everyone else (business partners, foreign partners) -> company rules (carrier-specific or ALL) or default 18% + $50 ground fee
  */
 
 const GroundRequest = require('../../models/GroundRequest');
@@ -36,7 +38,7 @@ function toAccessorialsNumber(accessorialCharges) {
 }
 
 /**
- * Kick off rating for a ground (LTL) request and persist results (with markup).
+ * Kick off rating for a ground (LTL) request and persist results (with role-aware markup).
  * @param {string} requestId - Mongo _id of the GroundRequest
  */
 async function processGroundQuote(requestId) {
@@ -131,38 +133,58 @@ async function processGroundQuote(requestId) {
         });
         await cost.save();
 
-        // === Apply markup/admin fee per your rules ===
-        let markupPercentage = 18; // default
+        // === Role-aware markup/admin fee ===
+        // Default to NO markup; only add when appropriate
+        let markupPercentage = 0;
         let adminFee = 0;
 
-        if (user?.companyId && company?.markupRules) {
-          // Find specific carrier markup or use ALL
-          const carrierRule = company.markupRules.find(
-            (r) => r.provider === rate.provider && r.active
-          );
-          const defaultRule = company.markupRules.find(
-            (r) => r.provider === 'ALL' && r.active
-          );
+        const role = user?.role;
 
-          if (carrierRule) {
-            markupPercentage = carrierRule.percentage || 18;
-            adminFee = carrierRule.flatFee || 0;
-          } else if (defaultRule) {
-            markupPercentage = defaultRule.percentage || 18;
-            adminFee = defaultRule.flatFee || 0;
+        const isAdminOrConship =
+          role === 'system_admin' || role === 'conship_employee';
+
+        if (!isAdminOrConship) {
+          // Business partners and foreign partners get markup
+          if (user?.companyId) {
+            if (company?.markupRules?.length) {
+              // Find specific carrier markup or use ALL
+              const carrierRule = company.markupRules.find(
+                (r) => r.provider === rate.provider && r.active
+              );
+              const defaultRule = company.markupRules.find(
+                (r) => r.provider === 'ALL' && r.active
+              );
+
+              if (carrierRule) {
+                markupPercentage = Number(carrierRule.percentage ?? 18);
+                adminFee = Number(carrierRule.flatFee ?? 0);
+              } else if (defaultRule) {
+                markupPercentage = Number(defaultRule.percentage ?? 18);
+                adminFee = Number(defaultRule.flatFee ?? 0);
+              } else {
+                // No active rules -> fallback defaults
+                markupPercentage = 18;
+                adminFee = 0;
+              }
+
+              // Add $50 admin fee for ground shipments
+              adminFee += 50;
+            } else {
+              // Default markup if no rules defined
+              markupPercentage = 18;
+              adminFee = 50; // includes the ground fee
+            }
+          } else {
+            // No company -> treat as general partner
+            markupPercentage = 18;
+            adminFee = 50;
           }
-
-          // Add $50 admin fee for ground shipments
-          adminFee += 50;
-        } else {
-          // Even without company rules, still add $50 ground fee
-          adminFee += 50;
         }
 
         const markupAmount  = totalCost * (markupPercentage / 100);
         const customerTotal = totalCost + markupAmount + adminFee;
 
-        // Store quote WITH markup applied
+        // Store quote with role-aware markup applied
         const quote = new GroundQuote({
           requestId,
           costId: cost._id,
@@ -208,7 +230,7 @@ async function processGroundQuote(requestId) {
         console.log(
           `💰 Saved quote from ${quote.carrier.name}: raw $${quote.rawCost.total.toFixed(
             2
-          )} → customer $${quote.customerPrice.total.toFixed(2)} (${tag})`
+          )} → customer $${quote.customerPrice.total.toFixed(2)} (${tag}) [role=${role || 'unknown'}]`
         );
       } catch (rateError) {
         console.error(`❌ Error processing rate from ${rate.provider}:`, rateError?.message || rateError);
