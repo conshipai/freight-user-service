@@ -39,6 +39,20 @@ const PERMISSION_HIERARCHY = {
 router.get('/me', authorize(), async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
+      console.log('User found:', user ? 'Yes' : 'No');
+if (user) {
+  console.log('User active field:', user.active);
+  console.log('User active type:', typeof user.active);
+  console.log('User status field:', user.status);
+  console.log('Full user object:', JSON.stringify(user.toObject(), null, 2));
+}
+
+if (!user) {
+  console.log('User not found:', email);
+  return res.status(401).json({ 
+    error: 'Invalid email or password' 
+  });
+}
       .select('-password')
       .populate('partnerId');
     res.json({ success: true, user });
