@@ -1,3 +1,6 @@
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
+
 const UserSchema = new Schema({
   // Basic Info
   email: { type: String, required: true, unique: true },
@@ -66,3 +69,4 @@ const UserSchema = new Schema({
     ref: 'User'
   }
 });
+module.exports = mongoose.model('User', UserSchema);
