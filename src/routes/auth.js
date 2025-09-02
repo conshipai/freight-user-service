@@ -105,7 +105,7 @@ router.post('/test-token', async (req, res) => {
       });
     }
     
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
     
     if (!user) {
       console.log('User not found:', email);
