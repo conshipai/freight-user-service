@@ -305,7 +305,7 @@ router.post('/:id/reset-password', authorize(['system_admin']), async (req, res)
     const newPassword = req.body.password || crypto.randomBytes(8).toString('hex');
     
     // Hash and save the new password
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = newPassword;
     user.mustChangePassword = true; // Force them to change on next login
     await user.save();
     
