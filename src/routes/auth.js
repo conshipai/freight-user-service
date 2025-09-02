@@ -19,76 +19,63 @@ if (!JWT_SECRET) {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     console.log('Login attempt for:', email);
-    
+
     // Validate input
     if (!email || !password) {
-      return res.status(400).json({ 
-        error: 'Email and password are required' 
-      });
+      return res.status(400).json({ error: 'Email and password are required' });
     }
-    
-    // Find user in database
+
+    // Find user in database (password is select:false in schema)
     const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-    
     if (!user) {
       console.log('User not found:', email);
-      return res.status(401).json({ 
-        error: 'Invalid email or password' 
-      });
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
-    
+
     // Check if user is active
     if (!user.active) {
-      return res.status(403).json({ 
-        error: 'Account is suspended. Please contact administrator.' 
-      });
+      return res.status(403).json({ error: 'Account is suspended. Please contact administrator.' });
     }
-    
+
     // Verify password against hashed password in database
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    
     if (!isPasswordValid) {
       console.log('Invalid password for user:', email);
-      return res.status(401).json({ 
-        error: 'Invalid email or password' 
-      });
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
-    
-    // Generate JWT token
+
+    // Generate JWT token (align with schema: partnerId, not companyId)
     const token = jwt.sign(
-      { 
+      {
         userId: user._id,
         email: user.email,
         role: user.role,
-        companyId: user.companyId
+        partnerId: user.partnerId || null
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
-    
-    // Update last login
-    user.lastLogin = new Date();
+
+    // Update last login (align with model: lastLoginAt)
+    user.lastLoginAt = new Date();
     await user.save();
-    
+
     console.log('Login successful for:', email);
-    
+
     // Return token and user data (without password)
     const userObj = user.toObject();
     delete userObj.password;
-    
+
     res.json({
       success: true,
-      token: token,
+      token,
       user: userObj
     });
-    
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
-      error: 'An error occurred during login. Please try again.' 
-    });
+    res.status(500).json({ error: 'An error occurred during login. Please try again.' });
   }
 });
 
@@ -96,70 +83,57 @@ router.post('/login', async (req, res) => {
 router.post('/test-token', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     console.log('Login attempt for:', email);
-    
+
     if (!email || !password) {
-      return res.status(400).json({ 
-        error: 'Email and password are required' 
-      });
+      return res.status(400).json({ error: 'Email and password are required' });
     }
-    
+
     const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-    
     if (!user) {
       console.log('User not found:', email);
-      return res.status(401).json({ 
-        error: 'Invalid email or password' 
-      });
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
-    
+
     if (!user.active) {
-      return res.status(403).json({ 
-        error: 'Account is suspended. Please contact administrator.' 
-      });
+      return res.status(403).json({ error: 'Account is suspended. Please contact administrator.' });
     }
-    
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    
     if (!isPasswordValid) {
       console.log('Invalid password for user:', email);
-      return res.status(401).json({ 
-        error: 'Invalid email or password' 
-      });
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
-    
+
     const token = jwt.sign(
-      { 
+      {
         userId: user._id,
         email: user.email,
         role: user.role,
-        companyId: user.companyId
+        partnerId: user.partnerId || null
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
-    
-    user.lastLogin = new Date();
+
+    user.lastLoginAt = new Date();
     await user.save();
-    
+
     console.log('Login successful for:', email);
-    
+
     const userObj = user.toObject();
     delete userObj.password;
-    
+
     // Match the expected response format
     res.json({
-      token: token,
+      token,
       userId: user._id,
       user: userObj
     });
-    
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
-      error: 'An error occurred during login. Please try again.' 
-    });
+    res.status(500).json({ error: 'An error occurred during login. Please try again.' });
   }
 });
 
@@ -169,25 +143,17 @@ router.post('/test-token', async (req, res) => {
 router.get('/verify', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     // Get fresh user data
     const user = await User.findById(decoded.userId).select('-password');
-    
     if (!user || !user.active) {
       return res.status(401).json({ error: 'Invalid token' });
     }
-    
-    res.json({
-      success: true,
-      user: user
-    });
-    
+
+    res.json({ success: true, user });
   } catch (error) {
     res.status(401).json({ error: 'Invalid or expired token' });
   }
@@ -199,47 +165,34 @@ router.get('/verify', async (req, res) => {
 router.post('/change-password', async (req, res) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-    
+    if (!token) return res.status(401).json({ error: 'No token provided' });
+
     const decoded = jwt.verify(token, JWT_SECRET);
     const { currentPassword, newPassword } = req.body;
-    
+
     // Validate input
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ 
-        error: 'Current password and new password are required' 
-      });
+      return res.status(400).json({ error: 'Current password and new password are required' });
     }
-    
     if (newPassword.length < 8) {
-      return res.status(400).json({ 
-        error: 'New password must be at least 8 characters long' 
-      });
+      return res.status(400).json({ error: 'New password must be at least 8 characters long' });
     }
-    
-    // Get user
-    const user = await User.findById(decoded.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
+
+    // Get user WITH PASSWORD (select: false in schema)
+    const user = await User.findById(decoded.userId).select('+password');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
     // Verify current password
     const isValid = await bcrypt.compare(currentPassword, user.password);
     if (!isValid) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
-    
-    // Hash and save new password
-    user.password = await bcrypt.hash(newPassword, 10);
+
+    // Assign new password (pre-save hook will hash)
+    user.password = newPassword;
     await user.save();
-    
-    res.json({ 
-      success: true, 
-      message: 'Password changed successfully' 
-    });
-    
+
+    res.json({ success: true, message: 'Password changed successfully' });
   } catch (error) {
     console.error('Password change error:', error);
     res.status(500).json({ error: 'Error changing password' });
