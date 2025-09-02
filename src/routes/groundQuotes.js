@@ -5,6 +5,7 @@ const GroundRequest = require('../models/GroundRequest');
 const GroundCost = require('../models/GroundCost');
 const GroundQuote = require('../models/GroundQuote');
 const { processGroundQuote } = require('../services/ground/processGroundQuote');
+const { authorize } = require('../middleware/authorize');
 
 /** Middleware: block foreign partners from using Ground quotes */
 function blockForeignPartners(req, res, next) {
@@ -19,7 +20,7 @@ function blockForeignPartners(req, res, next) {
 }
 
 // Create a new ground quote request
-router.post('/create', blockForeignPartners, async (req, res) => {
+router.post('/create', authorize(), blockForeignPartners, async (req, res) => {
   try {
     console.log('📦 Creating ground quote request...');
     const { serviceType, formData } = req.body;
@@ -90,7 +91,7 @@ router.post('/create', blockForeignPartners, async (req, res) => {
 });
 
 // Get quote results (apply markup at view time)
-router.get('/results/:requestId', blockForeignPartners, async (req, res) => {
+router.get('/results/:requestId', authorize(), blockForeignPartners, async (req, res) => {
   try {
     const request = await GroundRequest.findById(req.params.requestId);
     if (!request) {
