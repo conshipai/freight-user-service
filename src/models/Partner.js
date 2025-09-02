@@ -12,14 +12,13 @@ const partnerSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    uppercase: true, // e.g., 'DHL', 'KWE', 'CEVA'
+    uppercase: true,
     trim: true
   },
   
-  // NEW: Partner Type
   type: {
     type: String,
-    enum: ['customer', 'foreign_partner'],
+    enum: ['customer', 'foreign_partner', 'vendor'],
     required: true
   },
   
@@ -52,14 +51,33 @@ const partnerSchema = new mongoose.Schema({
     default: 'pending'
   },
   
-  // NEW: API Markup Settings (replaces old markupSettings)
+  // NEW: Flexible Pricing Configuration
+  pricingConfig: {
+    showTrueCost: { type: Boolean, default: false },
+    
+    // Default markups by mode (fallback)
+    defaultMarkups: {
+      ground: { type: Number, default: 18 },
+      air: { type: Number, default: 15 },
+      ocean: { type: Number, default: 20 }
+    },
+    
+    // Vendor-specific overrides (dynamic)
+    vendorOverrides: {
+      type: Map,
+      of: Number,
+      default: {}
+    }
+  },
+  
+  // KEEP: Existing API Markups (for backward compatibility)
   apiMarkups: {
     pelicargo: { type: Number, default: 15 },
     freightForce: { type: Number, default: 18 },
     ecuLines: { type: Number, default: 20 }
   },
   
-  // NEW: Mode-specific Charges
+  // Mode-specific Charges
   modeCharges: {
     air: [{
       name: String,
@@ -75,16 +93,16 @@ const partnerSchema = new mongoose.Schema({
     }]
   },
   
-  // NEW: Modules the partner has access to
+  // Modules the partner has access to
   modules: [{
     type: String,
     default: ['Pricing Portal']
   }],
   
-  // Additional Fees (keeping this from original)
+  // Additional Fees
   additionalFees: [{
-    name: String,        // e.g., "AWB Fee", "Documentation"
-    amount: Number,      // e.g., 35
+    name: String,
+    amount: Number,
     serviceType: {
       type: String,
       enum: ['air', 'ocean', 'road', 'all']
@@ -97,6 +115,13 @@ const partnerSchema = new mongoose.Schema({
     active: { type: Boolean, default: true }
   }],
   
+  // User Management
+  userLimit: { type: Number, default: 5 },
+  primaryContactId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  
   // KYC/Compliance
   kycStatus: {
     type: String,
@@ -104,7 +129,7 @@ const partnerSchema = new mongoose.Schema({
     default: 'pending'
   },
   kycDocuments: [{
-    documentType: String, // 'business_license', 'tax_certificate', etc.
+    documentType: String,
     fileName: String,
     uploadedAt: Date,
     verifiedAt: Date
@@ -132,29 +157,4 @@ const partnerSchema = new mongoose.Schema({
     timezone: String,
     monday: { open: String, close: String },
     tuesday: { open: String, close: String },
-    wednesday: { open: String, close: String },
-    thursday: { open: String, close: String },
-    friday: { open: String, close: String },
-    saturday: { open: String, close: String },
-    sunday: { open: String, close: String }
-  },
-  
-  // Metadata
-  approvedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  approvedAt: Date,
-  notes: String,
-  
-}, {
-  timestamps: true
-});
-
-// Indexes for better query performance
-partnerSchema.index({ companyCode: 1 });
-partnerSchema.index({ country: 1 });
-partnerSchema.index({ status: 1 });
-partnerSchema.index({ type: 1 }); // NEW index for partner type
-
-module.exports = mongoose.model('Partner', partnerSchema);
+    wednesday: { open: String, close: String
