@@ -30,7 +30,7 @@ router.post('/login', async (req, res) => {
     }
     
     // Find user in database
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
     
     if (!user) {
       console.log('User not found:', email);
