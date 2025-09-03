@@ -15,7 +15,7 @@ router.get('/', (req, res) => {
         scope: 'quotes',
         module: './App',
         type: 'module',
-        roles: ['system_admin', 'conship_employee', 'customer', 'foreign_partner'],
+        roles: ['system_admin', 'conship_employee', 'partner_admin', 'customer'],
         position: 1,
         status: 'active',
         description: 'Generate and manage freight quotes'
