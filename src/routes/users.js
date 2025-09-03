@@ -43,6 +43,8 @@ router.get('/me', authorize(), async (req, res) => {
       .populate('partnerId');
 
     console.log('User found:', !!user);
+    console.log('Partner populated?', user?.partnerId?._id ? 'Yes' : 'No');
+    console.log('Partner data:', user?.partnerId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
