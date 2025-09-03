@@ -16,35 +16,28 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
       contactName,
       country,
       phone,
-      address,
-      city,
-      state,
-      zipCode,
-      website,
       apiMarkups,
       modeCharges,
-      modules
+      modules,
+      userRole  // ← Get the user role from request
     } = req.body;
     
+    // Generate temporary password
     const tempPassword = crypto.randomBytes(8).toString('hex');
     console.log(`Creating user ${contactEmail} with password: ${tempPassword}`);
     
+    // Create partner with the business type (foreign_partner or customer)
     const partner = new Partner({
       companyName,
       companyCode: companyCode.toUpperCase(),
-      type: type === 'foreign_partner' ? 'foreign_partner' : 'customer',
+      type: type, // This stays as 'foreign_partner' or 'customer'
       email: contactEmail,
       contactName,
       country,
       phone,
-      address,
-      city,
-      state,
-      zipCode,
-      website,
-      apiMarkups: apiMarkups || { pelicargo: 15, freightForce: 18, ecuLines: 20 }, // ✅ New field
-      modeCharges: modeCharges || { air: [], ocean: [], ground: [] }, // ✅ New field
-      modules: modules || ['Quote Manager'], // ✅ New field
+      apiMarkups: apiMarkups || { pelicargo: 15, freightForce: 18, ecuLines: 20 },
+      modeCharges: modeCharges || { air: [], ocean: [], ground: [] },
+      modules: modules || ['Quote Manager'],
       status: 'approved',
       approvedBy: req.user._id,
       approvedAt: new Date()
@@ -52,15 +45,12 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
     
     await partner.save();
     
-    const userRole = (type === 'foreign_partner' || country !== 'United States') 
-      ? 'foreign_partner' 
-      : 'customer';
-    
+    // Create user account - ALWAYS use 'partner_admin' role
     const user = new User({
       email: contactEmail,
-      password: tempPassword,
+      password: tempPassword, // Will be hashed by pre-save hook
       name: contactName,
-      role: userRole,
+      role: userRole || 'partner_admin', // ← Use partner_admin for all partner types
       partnerId: partner._id,
       mustChangePassword: true,
       active: true
@@ -71,12 +61,13 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
     res.json({ 
       success: true, 
       message: 'Partner created successfully',
-      tempPassword,
+      tempPassword: tempPassword, // Return the password
       partner: {
         id: partner._id,
         companyName: partner.companyName,
+        type: partner.type, // This is the business type
         email: partner.email,
-        role: userRole
+        userRole: user.role  // This is the permission role
       }
     });
   } catch (error) {
@@ -84,7 +75,6 @@ router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
 // ✅ Updated: Get all partners with correct response format
 router.get('/', authorize(['system_admin']), async (req, res) => {
   try {
