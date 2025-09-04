@@ -7,6 +7,7 @@ const Quote = require('../models/Quote');
 const RateProvider = require('../models/RateProvider');
 const ProviderFactory = require('../services/providers/ProviderFactory');
 const { authorize } = require('../middleware/authorize');
+const Booking = require('../models/Booking'); // ADDED
 
 // ---------------------------------------------------------
 // Define processQuoteRequest here (needed by /create route)
@@ -23,43 +24,6 @@ async function processQuoteRequest(requestId) {
     );
 
     // TODO: Implement your actual provider processing here.
-    // Example skeleton (commented so it doesn’t break your current flow):
-    //
-    // const request = await Request.findById(requestId);
-    // if (!request) throw new Error('Request not found');
-    //
-    // // Use your ProviderFactory to get the active providers and fetch rates
-    // const providers = await RateProvider.find({ active: true });
-    // const providerClients = providers.map(p => ProviderFactory.create(p));
-    //
-    // const allRates = [];
-    // for (const client of providerClients) {
-    //   try {
-    //     const rates = await client.getAirRates(request); // or getOceanRates, etc.
-    //     if (rates?.length) allRates.push(...rates);
-    //   } catch (e) {
-    //     console.error(`[quotes] Provider ${client.name} failed:`, e.message);
-    //   }
-    // }
-    //
-    // // Persist raw costs (optional)
-    // if (allRates.length) {
-    //   await Cost.create({
-    //     requestId,
-    //     items: allRates,
-    //     source: 'providers',
-    //     createdAt: new Date()
-    //   });
-    // }
-    //
-    // // Optionally create/refresh a Quote record
-    // await Quote.findOneAndUpdate(
-    //   { requestId },
-    //   { requestId, status: 'rated', lastRatedAt: new Date(), rateCount: allRates.length },
-    //   { upsert: true, new: true, setDefaultsOnInsert: true }
-    // );
-    //
-    // await Request.findByIdAndUpdate(requestId, { status: 'completed' });
 
     console.log('[quotes] Finished (skeleton) processing for:', requestId);
   } catch (error) {
@@ -108,6 +72,44 @@ router.post('/init', async (req, res) => {
       success: false,
       error: 'Failed to initialize quote'
     });
+  }
+});
+
+/**
+ * STEP 7 — Unified Recent Quotes (all modes)
+ * GET /api/quotes/recent?limit=10
+ */
+router.get('/recent', authorize(), async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    // Limit visibility for non-admins
+    const query = {};
+    if (req.user.role !== 'system_admin') {
+      query.userId = req.user._id;
+    }
+
+    const requests = await Request.find(query)
+      .sort('-createdAt')
+      .limit(parseInt(limit, 10))
+      .lean();
+
+    // Attach booking status for each request
+    const requestsWithStatus = await Promise.all(
+      requests.map(async (request) => {
+        const booking = await Booking.findOne({ requestId: request._id }).lean();
+        return {
+          ...request,
+          isBooked: !!booking,
+          bookingId: booking?.bookingId
+        };
+      })
+    );
+
+    res.json({ success: true, requests: requestsWithStatus });
+  } catch (error) {
+    console.error('Error fetching recent quotes:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
