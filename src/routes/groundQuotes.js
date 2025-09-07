@@ -30,6 +30,10 @@ router.post('/create', authorize(), blockForeignPartners, async (req, res) => {
       userEmail: req.user?.email || 'test@example.com',
       company: req.user?.company || 'Test Company',
       serviceType: serviceType,
+      
+      // ✅ ADD THIS: Store original formData for history navigation
+      originalFormData: formData,  // Preserves the exact form state for restoration
+      
       origin: {
         zipCode: formData.originZip,
         city: formData.originCity,
@@ -138,7 +142,9 @@ router.get('/results/:requestId', authorize(), blockForeignPartners, async (req,
       success: true,
       status: request.status,
       requestNumber: request.requestNumber,
-      quotes: pricedQuotes
+      quotes: pricedQuotes,
+      // ✅ OPTIONAL: Include originalFormData in the response
+      originalFormData: request.originalFormData
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -172,7 +178,9 @@ router.get('/recent', authorize(), blockForeignPartners, async (req, res) => {
 
         return {
           ...request,
-          quoteCount
+          quoteCount,
+          // ✅ Include originalFormData for each recent quote
+          originalFormData: request.originalFormData
         };
       })
     );
@@ -183,6 +191,44 @@ router.get('/recent', authorize(), blockForeignPartners, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching recent quotes:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ✅ NEW ENDPOINT: Get original form data for a specific request
+router.get('/formdata/:requestId', authorize(), blockForeignPartners, async (req, res) => {
+  try {
+    const request = await GroundRequest.findById(req.params.requestId)
+      .select('originalFormData requestNumber serviceType')
+      .lean();
+    
+    if (!request) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Request not found' 
+      });
+    }
+
+    // Verify user has access to this request
+    if (req.user.role !== 'system_admin' && 
+        request.userId?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Access denied' 
+      });
+    }
+
+    res.json({
+      success: true,
+      requestNumber: request.requestNumber,
+      serviceType: request.serviceType,
+      formData: request.originalFormData
+    });
+  } catch (error) {
+    console.error('Error fetching form data:', error);
     res.status(500).json({
       success: false,
       error: error.message
