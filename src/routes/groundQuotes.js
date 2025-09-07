@@ -1,240 +1,195 @@
-// routes/groundQuotes.js
-const express = require('express');
-const router = express.Router();
-const GroundRequest = require('../models/GroundRequest');
-const GroundCost = require('../models/GroundCost');
-const GroundQuote = require('../models/GroundQuote');
-const { processGroundQuote } = require('../services/ground/processGroundQuote');
-const { authorize } = require('../middleware/authorize');
+// src/models/GroundRequest.js
+const mongoose = require('mongoose');
 
-/** Middleware: block foreign partners from using Ground quotes */
-function blockForeignPartners(req, res, next) {
-  const role = req.user?.role;
-  if (role === 'foreign_partner' || role === 'foreign_partner_user') {
-    return res.status(403).json({
-      success: false,
-      error: 'Ground quotes are not available for foreign partners. Please use Air or Ocean quote modules.'
-    });
-  }
-  return next();
-}
-
-// Create a new ground quote request
-router.post('/create', authorize(), blockForeignPartners, async (req, res) => {
-  try {
-    console.log('📦 Creating ground quote request...');
-    const { serviceType, formData } = req.body;
-
-    const groundRequest = new GroundRequest({
-      userId: req.user?._id || '000000000000000000000000',
-      userEmail: req.user?.email || 'test@example.com',
-      company: req.user?.company || 'Test Company',
-      serviceType: serviceType,
-      
-      // ✅ ADD THIS: Store original formData for history navigation
-      originalFormData: formData,  // Preserves the exact form state for restoration
-      
-      origin: {
-        zipCode: formData.originZip,
-        city: formData.originCity,
-        state: formData.originState
+const groundRequestSchema = new mongoose.Schema({
+  // User information
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  userEmail: {
+    type: String,
+    required: true
+  },
+  company: {
+    type: String,
+    required: true
+  },
+  companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company'
+  },
+  
+  // Request metadata
+  requestNumber: {
+    type: String,
+    unique: true,
+    required: true
+  },
+  serviceType: {
+    type: String,
+    enum: ['ltl', 'ftl', 'partial'],
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed'],
+    default: 'pending'
+  },
+  
+  // ✅ ADD THIS: Store original form data for UI navigation and history
+  formData: {
+    type: mongoose.Schema.Types.Mixed,
+    required: false // Optional to maintain backward compatibility
+  },
+  
+  // Origin information
+  origin: {
+    zipCode: {
+      type: String,
+      required: true
+    },
+    city: String,
+    state: String,
+    country: {
+      type: String,
+      default: 'US'
+    }
+  },
+  
+  // Destination information
+  destination: {
+    zipCode: {
+      type: String,
+      required: true
+    },
+    city: String,
+    state: String,
+    country: {
+      type: String,
+      default: 'US'
+    }
+  },
+  
+  // Pickup date
+  pickupDate: {
+    type: Date,
+    required: true
+  },
+  
+  // LTL specific details
+  ltlDetails: {
+    commodities: [{
+      unitType: {
+        type: String,
+        enum: ['pallet', 'crate', 'box', 'bundle', 'roll', 'other']
       },
-      destination: {
-        zipCode: formData.destZip,
-        city: formData.destCity,
-        state: formData.destState
-      },
-      pickupDate: formData.pickupDate,
-      ltlDetails: serviceType === 'ltl' ? {
-        commodities: formData.commodities.map(c => ({
-          unitType: c.unitType,
-          quantity: parseInt(c.quantity),
-          weight: parseFloat(c.weight),
-          length: parseFloat(c.length),
-          width: parseFloat(c.width),
-          height: parseFloat(c.height),
-          description: c.description,
-          freightClass: c.useOverride ? c.overrideClass : c.calculatedClass,
-          stackable: c.stackable !== false
-        }))
-      } : undefined,
-      accessorials: {
-        liftgatePickup: formData.liftgatePickup,
-        liftgateDelivery: formData.liftgateDelivery,
-        residentialDelivery: formData.residentialDelivery,
-        insideDelivery: formData.insideDelivery,
-        limitedAccessPickup: formData.limitedAccessPickup,
-        limitedAccessDelivery: formData.limitedAccessDelivery
-      },
-      status: 'pending'
-    });
-
-    await groundRequest.save();
-    console.log('✅ Ground request created:', groundRequest.requestNumber);
-
-    // Kick off async processing
-    processGroundQuote(groundRequest._id);
-
-    res.json({
-      success: true,
-      data: {
-        _id: groundRequest._id,
-        requestNumber: groundRequest.requestNumber,
-        status: 'processing',
-        message: 'Fetching rates from carriers...'
+      quantity: Number,
+      weight: Number,
+      length: Number,
+      width: Number,
+      height: Number,
+      description: String,
+      freightClass: String,
+      stackable: {
+        type: Boolean,
+        default: true
       }
-    });
-
-  } catch (error) {
-    console.error('❌ Ground quote creation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    }]
+  },
+  
+  // FTL specific details
+  ftlDetails: {
+    equipmentType: String,
+    weight: Number,
+    specialRequirements: [String]
+  },
+  
+  // Accessorial services
+  accessorials: {
+    liftgatePickup: {
+      type: Boolean,
+      default: false
+    },
+    liftgateDelivery: {
+      type: Boolean,
+      default: false
+    },
+    residentialPickup: {
+      type: Boolean,
+      default: false
+    },
+    residentialDelivery: {
+      type: Boolean,
+      default: false
+    },
+    insidePickup: {
+      type: Boolean,
+      default: false
+    },
+    insideDelivery: {
+      type: Boolean,
+      default: false
+    },
+    limitedAccessPickup: {
+      type: Boolean,
+      default: false
+    },
+    limitedAccessDelivery: {
+      type: Boolean,
+      default: false
+    },
+    appointmentRequired: {
+      type: Boolean,
+      default: false
+    },
+    notifyBeforeDelivery: {
+      type: Boolean,
+      default: false
+    }
+  },
+  
+  // Error tracking
+  errors: [{
+    carrier: String,
+    message: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
+  // Timestamps
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
 });
 
-// Get quote results (apply markup at view time)
-router.get('/results/:requestId', authorize(), blockForeignPartners, async (req, res) => {
-  try {
-    const request = await GroundRequest.findById(req.params.requestId);
-    if (!request) {
-      return res.status(404).json({ success: false, error: 'Request not found' });
-    }
+// Indexes for performance
+groundRequestSchema.index({ userId: 1, createdAt: -1 });
+groundRequestSchema.index({ requestNumber: 1 });
+groundRequestSchema.index({ status: 1 });
+groundRequestSchema.index({ companyId: 1, createdAt: -1 });
 
-    const quotes = await GroundQuote.find({
-      requestId: req.params.requestId,
-      status: 'active'
-    }).sort('ranking.position');
-
-    // Apply markup based on the user viewing the quotes
-    const MarkupCalculator = require('../services/MarkupCalculator');
-
-    const pricedQuotes = await Promise.all(
-      quotes.map(async (quote) => {
-        const pricing = await MarkupCalculator.calculateQuotePrice(
-          quote,
-          req.user?._id || request.userId,
-          req.user?.companyId || request.companyId
-        );
-
-        return {
-          quoteId: quote._id,
-          carrier: quote.carrier.name,
-          carrierCode: quote.carrier.code,
-          service: quote.carrier.service,
-          accountType: quote.carrier.accountType,
-          accountLabel: pricing.isCustomerAccount ? pricing.accountLabel : 'Conship Rates',
-
-          // Pricing visibility based on role / account type
-          rawCost: pricing.showingDirectCost ? quote.rawCost.total : undefined,
-          price: pricing.total,
-          markup: pricing.showingDirectCost ? pricing.markupAmount : undefined,
-          additionalFees: pricing.additionalFees,
-
-          transitDays: quote.transit.businessDays,
-          guaranteed: quote.transit.guaranteed
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      status: request.status,
-      requestNumber: request.requestNumber,
-      quotes: pricedQuotes,
-      // ✅ OPTIONAL: Include originalFormData in the response
-      originalFormData: request.originalFormData
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+// Auto-generate request number if not provided
+groundRequestSchema.pre('save', async function(next) {
+  if (!this.requestNumber) {
+    const count = await this.constructor.countDocuments();
+    this.requestNumber = `GRQ${Date.now()}${count + 1}`;
   }
+  next();
 });
 
-/* ------------------------- NEW: Recent Ground Quotes ------------------------- */
-// Get recent ground quotes for dashboard
-router.get('/recent', authorize(), blockForeignPartners, async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-
-    // Get recent requests for the current user or all if admin
-    const query = {};
-    if (req.user.role !== 'system_admin') {
-      query.userId = req.user._id;
-    }
-
-    const requests = await GroundRequest.find(query)
-      .sort('-createdAt')
-      .limit(parseInt(limit, 10))
-      .lean();
-
-    // For each request, get the quote count
-    const requestsWithQuotes = await Promise.all(
-      requests.map(async (request) => {
-        const quoteCount = await GroundQuote.countDocuments({
-          requestId: request._id,
-          status: 'active'
-        });
-
-        return {
-          ...request,
-          quoteCount,
-          // ✅ Include originalFormData for each recent quote
-          originalFormData: request.originalFormData
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      requests: requestsWithQuotes
-    });
-  } catch (error) {
-    console.error('Error fetching recent quotes:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
+// Update the updatedAt timestamp on save
+groundRequestSchema.pre('save', function(next) {
+  this.updatedAt = new Date();
+  next();
 });
 
-// ✅ NEW ENDPOINT: Get original form data for a specific request
-router.get('/formdata/:requestId', authorize(), blockForeignPartners, async (req, res) => {
-  try {
-    const request = await GroundRequest.findById(req.params.requestId)
-      .select('originalFormData requestNumber serviceType')
-      .lean();
-    
-    if (!request) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Request not found' 
-      });
-    }
-
-    // Verify user has access to this request
-    if (req.user.role !== 'system_admin' && 
-        request.userId?.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ 
-        success: false, 
-        error: 'Access denied' 
-      });
-    }
-
-    res.json({
-      success: true,
-      requestNumber: request.requestNumber,
-      serviceType: request.serviceType,
-      formData: request.originalFormData
-    });
-  } catch (error) {
-    console.error('Error fetching form data:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-/* --------------------------------------------------------------------------- */
-
-module.exports = router;
+module.exports = mongoose.model('GroundRequest', groundRequestSchema);
