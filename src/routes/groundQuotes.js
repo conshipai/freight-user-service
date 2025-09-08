@@ -1,10 +1,12 @@
 const router = require('express').Router();
+const mongoose = require('mongoose');
 const GroundRequest = require('../models/GroundRequest');
 const GroundCost = require('../models/GroundCost');
 const GroundQuote = require('../models/GroundQuote');
 const auth = require('../middleware/auth');
+const { processGroundQuote } = require('../services/ground/processGroundQuote');
 
-// Create ground quote request - FIXED PATH
+// Create ground quote request - NO MOCKS
 router.post('/create', auth, async (req, res) => {
   try {
     console.log('📥 Received ground quote request:', {
@@ -24,10 +26,7 @@ router.post('/create', auth, async (req, res) => {
     await groundRequest.save();
     console.log('✅ Ground request created:', groundRequest.requestNumber);
 
-    // Create mock quotes immediately for testing
-    const mockQuotes = await createMockQuotes(groundRequest);
-
-    // Return response matching frontend expectations
+    // Return immediate response
     res.json({
       success: true,
       data: {
@@ -38,6 +37,21 @@ router.post('/create', auth, async (req, res) => {
       }
     });
 
+    // Process real quotes in background - NO MOCKS
+    setTimeout(async () => {
+      try {
+        console.log('🚀 Starting background processing for:', groundRequest._id);
+        await processGroundQuote(groundRequest._id);
+        console.log('✅ Background processing completed');
+      } catch (err) {
+        console.error('❌ processGroundQuote failed:', err);
+        await GroundRequest.findByIdAndUpdate(groundRequest._id, {
+          status: 'failed',
+          error: err?.message || 'Failed to process ground quote'
+        });
+      }
+    }, 100);
+
   } catch (error) {
     console.error('❌ Ground quote creation error:', error);
     res.status(500).json({
@@ -47,12 +61,12 @@ router.post('/create', auth, async (req, res) => {
   }
 });
 
-// Get quote results - Support both /results and direct ID
+// Get quote results
 router.get('/:requestId/results', auth, async (req, res) => {
   try {
     console.log('📊 Fetching results for:', req.params.requestId);
 
-    // Support ObjectId or legacy requestNumber
+    // Support ObjectId or requestNumber
     let request;
     if (/^[0-9a-fA-F]{24}$/.test(req.params.requestId)) {
       request = await GroundRequest.findById(req.params.requestId);
@@ -64,7 +78,7 @@ router.get('/:requestId/results', auth, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Quote request not found' });
     }
 
-    // Get quotes for this request
+    // Get real quotes from database
     const quotes = await GroundQuote.find({
       requestId: request._id,
       status: 'active'
@@ -79,7 +93,7 @@ router.get('/:requestId/results', auth, async (req, res) => {
       transitDays: q.transit.days,
       guaranteed: q.transit.guaranteed || false,
       
-      // Additional details the frontend expects
+      // Additional details
       service_details: {
         carrier: q.carrier.name,
         service: q.carrier.service || 'Standard',
@@ -96,7 +110,7 @@ router.get('/:requestId/results', auth, async (req, res) => {
       requestId: request._id.toString(),
       requestNumber: request.requestNumber,
       serviceType: request.serviceType,
-      status: request.status === 'processing' ? 'complete' : request.status,
+      status: request.status,
       formData: request.formData,
       quotes: formattedQuotes,
       error: request.error
@@ -107,75 +121,5 @@ router.get('/:requestId/results', auth, async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// Helper function to create mock quotes for testing
-async function createMockQuotes(request) {
-  const carriers = [
-    { name: 'FedEx Freight', code: 'FXFE', days: 2, price: 450 },
-    { name: 'YRC Freight', code: 'YRCW', days: 3, price: 380 },
-    { name: 'Saia LTL Freight', code: 'SAIA', days: 3, price: 410 },
-    { name: 'Estes Express', code: 'EXLA', days: 4, price: 350 }
-  ];
-
-  const quotes = [];
-  
-  for (const carrier of carriers) {
-    const rawCost = carrier.price;
-    const markup = rawCost * 0.18;
-    const total = rawCost + markup;
-
-    const quote = new GroundQuote({
-      requestId: request._id,
-      costId: new require('mongoose').Types.ObjectId(),
-      requestNumber: request.requestNumber,
-      userId: request.userId,
-      
-      carrier: {
-        name: carrier.name,
-        code: carrier.code,
-        service: 'Standard LTL'
-      },
-      
-      rawCost: {
-        baseFreight: rawCost * 0.8,
-        fuelSurcharge: rawCost * 0.15,
-        accessorials: rawCost * 0.05,
-        total: rawCost
-      },
-      
-      markup: {
-        type: 'percentage',
-        percentage: 18,
-        totalMarkup: markup
-      },
-      
-      customerPrice: {
-        subtotal: rawCost,
-        fees: 0,
-        tax: 0,
-        total: total
-      },
-      
-      transit: {
-        days: carrier.days,
-        businessDays: carrier.days,
-        estimatedDelivery: new Date(Date.now() + (carrier.days * 24 * 60 * 60 * 1000)),
-        guaranteed: false
-      },
-      
-      status: 'active',
-      validUntil: new Date(Date.now() + (7 * 24 * 60 * 60 * 1000))
-    });
-
-    await quote.save();
-    quotes.push(quote);
-  }
-
-  // Update request status
-  request.status = 'quoted';
-  await request.save();
-
-  return quotes;
-}
 
 module.exports = router;
