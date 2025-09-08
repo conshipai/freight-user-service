@@ -152,7 +152,13 @@ async function processGroundQuote(requestId) {
           status: 'active'
         });
         await quote.save();
-
+console.log(`💾 Saved to DB:
+  - Cost ID: ${cost._id} (ground_costs)
+  - Quote ID: ${quote._id} (ground_quotes)
+  - Request: ${requestId}
+  - Carrier: ${rate.carrierName}
+  - Our Cost: $${cost.costs.totalCost}
+  - Customer Price: $${quote.customerPrice.total}`);
         console.log(`✅ Saved quote from ${rate.carrierName}: $${customerTotal.toFixed(2)}`);
       } catch (err) {
         console.error(`❌ Error processing rate:`, err);
