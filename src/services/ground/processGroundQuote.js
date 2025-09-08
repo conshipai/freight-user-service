@@ -4,7 +4,6 @@ const GroundCost = require('../../models/GroundCost');
 const GroundQuote = require('../../models/GroundQuote');
 const User = require('../../models/User');
 const Company = require('../../models/Company');
-const CarrierAccount = require('../../models/CarrierAccount');
 const GroundProviderFactory = require('../providers/GroundProviderFactory');
 
 // Helper: robustly coerce accessorials to a single number
@@ -24,15 +23,17 @@ function toAccessorialsNumber(accessorialCharges) {
 }
 
 async function processGroundQuote(requestId) {
+  console.log('🔄 Starting processGroundQuote for request:', requestId);
+  
   try {
-    console.log('🔄 Processing ground quote:', requestId);
-
     const request = await GroundRequest.findById(requestId);
     if (!request) {
       throw new Error('Request not found');
     }
 
-    // FIX: Extract data from formData field instead of non-existent fields
+    console.log('📋 Found request:', request.requestNumber);
+
+    // Extract data from formData
     const formData = request.formData || {};
     
     const carrierRequestData = {
@@ -59,7 +60,7 @@ async function processGroundQuote(requestId) {
       serviceType: request.serviceType || 'standard'
     };
 
-    console.log('📦 Request data prepared:', JSON.stringify(carrierRequestData, null, 2));
+    console.log('📦 Getting rates from carriers...');
 
     // Get rates from carriers
     const carrierRates = await GroundProviderFactory.getRatesWithCustomerAccounts(
@@ -68,7 +69,7 @@ async function processGroundQuote(requestId) {
       request.companyId
     );
 
-    console.log(`📊 Got ${carrierRates?.length || 0} total rates`);
+    console.log(`📊 Got ${carrierRates?.length || 0} carrier rates`);
 
     if (!Array.isArray(carrierRates) || carrierRates.length === 0) {
       console.log('⚠️ No carriers returned rates');
@@ -79,18 +80,27 @@ async function processGroundQuote(requestId) {
       return;
     }
 
+    let successfulQuotes = 0;
+    let failedQuotes = 0;
+
     // Process each rate
     for (const rate of carrierRates) {
       try {
+        console.log(`\n💰 Processing rate from ${rate.carrierName || rate.provider}`);
+        
+        // Parse the costs
         const baseFreight = Number(rate.baseFreight || 0);
         const fuelSurcharge = Number(rate.fuelSurcharge || 0);
         const accTotal = toAccessorialsNumber(rate.accessorialCharges);
         const totalCost = Number(rate.totalCost || (baseFreight + fuelSurcharge + accTotal));
         const transitDays = Number(rate.transitDays || 3);
 
+        console.log(`  Base: $${baseFreight}, Fuel: $${fuelSurcharge}, Acc: $${accTotal}, Total: $${totalCost}`);
+
         // Save cost
         const cost = new GroundCost({
           requestId,
+          requestNumber: request.requestNumber,
           provider: rate.provider || 'unknown',
           carrierName: rate.carrierName || 'Unknown Carrier',
           service: rate.service || 'Standard LTL',
@@ -110,69 +120,130 @@ async function processGroundQuote(requestId) {
           },
           status: 'completed'
         });
+        
         await cost.save();
+        console.log(`  ✅ Cost saved with ID: ${cost._id}`);
 
-        // Calculate markup (simplified for now)
-        const markupPercentage = 18;
-        const markupAmount = totalCost * 0.18;
+        // Get user for markup calculation
+        const user = await User.findById(request.userId);
+        const company = user?.companyId ? await Company.findById(user.companyId) : null;
+
+        // Calculate markup
+        let markupPercentage = 18; // Default
+        
+        // System admins and employees see direct costs (0% markup)
+        if (user?.role === 'system_admin' || user?.role === 'conship_employee') {
+          markupPercentage = 0;
+          console.log(`  📊 User role ${user.role} gets 0% markup`);
+        } else if (company?.markupRules?.length > 0) {
+          // Find applicable markup rule
+          const rule = company.markupRules.find(r => 
+            r.active && 
+            (r.provider === 'ALL' || r.provider === rate.provider) &&
+            (r.mode === 'all' || r.mode === 'road')
+          );
+          if (rule) {
+            markupPercentage = rule.percentage || 18;
+            console.log(`  📊 Company rule applies ${markupPercentage}% markup`);
+          }
+        }
+
+        const markupAmount = totalCost * (markupPercentage / 100);
         const customerTotal = totalCost + markupAmount;
 
-        // Save quote
-        const quote = new GroundQuote({
-          requestId,
+        console.log(`  💸 Markup: ${markupPercentage}% = $${markupAmount.toFixed(2)}`);
+        console.log(`  💵 Customer price: $${customerTotal.toFixed(2)}`);
+
+        // Create quote - with all required fields
+        const quoteData = {
+          // Required fields
+          requestId: request._id,
           costId: cost._id,
-          requestNumber: request.requestNumber,
           userId: request.userId,
+          
+          // Optional but helpful
+          requestNumber: request.requestNumber,
+          companyId: company?._id,
+          
+          // Carrier info
           carrier: {
-            name: rate.carrierName,
+            name: rate.carrierName || rate.provider,
             code: rate.provider,
             service: rate.service || 'Standard LTL'
           },
+          
+          // Raw cost (with required 'total')
           rawCost: {
             baseFreight,
             fuelSurcharge,
             accessorials: accTotal,
-            total: totalCost
+            total: totalCost  // REQUIRED field
           },
+          
+          // Markup (with required 'totalMarkup')
           markup: {
             type: 'percentage',
             percentage: markupPercentage,
-            totalMarkup: markupAmount
+            totalMarkup: markupAmount  // REQUIRED field
           },
+          
+          // Customer price (with required 'total')
           customerPrice: {
             subtotal: totalCost,
             fees: 0,
-            total: customerTotal
+            total: customerTotal,  // REQUIRED field
+            currency: 'USD'
           },
+          
+          // Transit info
           transit: {
             days: transitDays,
             businessDays: transitDays,
             guaranteed: rate.guaranteed || false
           },
-          status: 'active'
-        });
+          
+          // Status and validity
+          status: 'active',
+          validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          
+          // Ranking
+          ranking: {
+            recommended: successfulQuotes === 0  // First quote is recommended
+          }
+        };
+
+        console.log(`  📝 Creating quote with required fields...`);
+        const quote = new GroundQuote(quoteData);
+        
         await quote.save();
-console.log(`💾 Saved to DB:
-  - Cost ID: ${cost._id} (ground_costs)
-  - Quote ID: ${quote._id} (ground_quotes)
-  - Request: ${requestId}
-  - Carrier: ${rate.carrierName}
-  - Our Cost: $${cost.costs.totalCost}
-  - Customer Price: $${quote.customerPrice.total}`);
-        console.log(`✅ Saved quote from ${rate.carrierName}: $${customerTotal.toFixed(2)}`);
+        successfulQuotes++;
+        
+        console.log(`  ✅ Quote saved: ${quote.quoteNumber} (ID: ${quote._id})`);
+        console.log(`     Customer sees: ${rate.carrierName} - $${customerTotal.toFixed(2)}`);
+        
       } catch (err) {
-        console.error(`❌ Error processing rate:`, err);
+        failedQuotes++;
+        console.error(`  ❌ Error processing rate from ${rate.carrierName}:`, err.message);
+        console.error(`     Stack:`, err.stack);
       }
     }
 
     // Update request status
+    const finalStatus = successfulQuotes > 0 ? 'quoted' : 'failed';
     await GroundRequest.findByIdAndUpdate(requestId, {
-      status: 'quoted'
+      status: finalStatus,
+      error: successfulQuotes === 0 ? 'Failed to create any quotes' : null
     });
 
-    console.log('✅ Ground quote processing complete');
+    console.log('\n✅ Ground quote processing complete:');
+    console.log(`   Successful quotes: ${successfulQuotes}`);
+    console.log(`   Failed quotes: ${failedQuotes}`);
+    console.log(`   Request status: ${finalStatus}`);
+    
   } catch (error) {
-    console.error('❌ Error in processGroundQuote:', error);
+    console.error('❌ Fatal error in processGroundQuote:', error);
+    console.error('   Stack:', error.stack);
+    
     await GroundRequest.findByIdAndUpdate(requestId, {
       status: 'failed',
       error: error.message
