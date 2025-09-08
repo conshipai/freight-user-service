@@ -1,123 +1,77 @@
+// src/routes/groundQuotes.js - SIMPLIFIED
 const router = require('express').Router();
-const mongoose = require('mongoose');
 const GroundRequest = require('../models/GroundRequest');
-const GroundCost = require('../models/GroundCost');
 const GroundQuote = require('../models/GroundQuote');
 const auth = require('../middleware/auth');
 const { processGroundQuote } = require('../services/ground/processGroundQuote');
 
-// Create ground quote request - NO MOCKS
+// Create request - that's it
 router.post('/create', auth, async (req, res) => {
   try {
-    console.log('📥 Received ground quote request:', {
-      serviceType: req.body.serviceType,
-      origin: `${req.body.formData?.originCity}, ${req.body.formData?.originState}`,
-      dest: `${req.body.formData?.destCity}, ${req.body.formData?.destState}`
-    });
-
-    // Create request
+    // Just save the request
     const groundRequest = new GroundRequest({
       userId: req.userId,
       serviceType: req.body.serviceType || 'ltl',
       status: 'processing',
-      formData: req.body.formData || req.body
+      formData: req.body.formData
     });
-
+    
     await groundRequest.save();
-    console.log('✅ Ground request created:', groundRequest.requestNumber);
-
-    // Return immediate response
+    
+    // Return the ID
     res.json({
       success: true,
       data: {
         _id: groundRequest._id.toString(),
         requestNumber: groundRequest.requestNumber,
-        status: 'processing',
-        message: 'Ground quote request created successfully'
+        status: 'processing'
       }
     });
-
-    // Process real quotes in background - NO MOCKS
-    setTimeout(async () => {
-      try {
-        console.log('🚀 Starting background processing for:', groundRequest._id);
-        await processGroundQuote(groundRequest._id);
-        console.log('✅ Background processing completed');
-      } catch (err) {
-        console.error('❌ processGroundQuote failed:', err);
-        await GroundRequest.findByIdAndUpdate(groundRequest._id, {
-          status: 'failed',
-          error: err?.message || 'Failed to process ground quote'
-        });
-      }
-    }, 100);
-
+    
+    // Process in background
+    processGroundQuote(groundRequest._id);
+    
   } catch (error) {
-    console.error('❌ Ground quote creation error:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to create quote request'
+      error: error.message
     });
   }
 });
 
-// Get quote results
+// Get results - just read from DB
 router.get('/:requestId/results', auth, async (req, res) => {
   try {
-    console.log('📊 Fetching results for:', req.params.requestId);
-
-    // Support ObjectId or requestNumber
-    let request;
-    if (/^[0-9a-fA-F]{24}$/.test(req.params.requestId)) {
-      request = await GroundRequest.findById(req.params.requestId);
-    } else {
-      request = await GroundRequest.findOne({ requestNumber: req.params.requestId });
-    }
-
+    const request = await GroundRequest.findById(req.params.requestId);
     if (!request) {
-      return res.status(404).json({ success: false, error: 'Quote request not found' });
+      return res.status(404).json({ success: false, error: 'Not found' });
     }
-
-    // Get real quotes from database
+    
+    // Get quotes from DB
     const quotes = await GroundQuote.find({
       requestId: request._id,
       status: 'active'
     }).sort('customerPrice.total');
-
-    // Format quotes for frontend
-    const formattedQuotes = quotes.map(q => ({
-      quoteId: q._id.toString(),
-      carrier: q.carrier.name,
-      service: q.carrier.service || 'Standard',
-      price: q.customerPrice.total,
-      transitDays: q.transit.days,
-      guaranteed: q.transit.guaranteed || false,
-      
-      // Additional details
-      service_details: {
-        carrier: q.carrier.name,
-        service: q.carrier.service || 'Standard',
-        guaranteed: q.transit.guaranteed || false
-      },
-      raw_cost: q.rawCost.total,
-      final_price: q.customerPrice.total,
-      markup_percentage: q.markup.percentage || 18,
-      transit_days: q.transit.days
-    }));
-
+    
+    // Return what's in DB
     res.json({
       success: true,
       requestId: request._id.toString(),
       requestNumber: request.requestNumber,
-      serviceType: request.serviceType,
       status: request.status,
       formData: request.formData,
-      quotes: formattedQuotes,
-      error: request.error
+      quotes: quotes.map(q => ({
+        quoteId: q._id.toString(),
+        carrier: q.carrier.name,
+        service: q.carrier.service,
+        price: q.customerPrice.total,
+        transitDays: q.transit.days,
+        raw_cost: q.rawCost.total,
+        final_price: q.customerPrice.total
+      }))
     });
-
+    
   } catch (error) {
-    console.error('❌ Error fetching quote results:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
