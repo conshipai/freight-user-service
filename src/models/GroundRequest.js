@@ -4,7 +4,7 @@ const groundRequestSchema = new mongoose.Schema({
   requestNumber: {
     type: String,
     unique: true
-    // REMOVED: required: true (let pre-save hook generate it)
+    // REMOVED: required: true
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
