@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 const groundRequestSchema = new mongoose.Schema({
   requestNumber: {
     type: String,
-    unique: true,
-    required: true
+    unique: true
+    // REMOVED: required: true (let pre-save hook generate it)
   },
   userId: {
     type: mongoose.Schema.Types.ObjectId,
