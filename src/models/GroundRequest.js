@@ -1,44 +1,24 @@
+// src/models/GroundRequest.js - SIMPLE
 const mongoose = require('mongoose');
 
 const groundRequestSchema = new mongoose.Schema({
-  requestNumber: {
-    type: String,
-    unique: true
-    // REMOVED: required: true
-  },
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  serviceType: {
-    type: String,
-    enum: ['ltl', 'ftl', 'expedited'],
-    required: true
-  },
+  requestNumber: String,  // Not required, generated automatically
+  userId: mongoose.Schema.Types.ObjectId,
+  serviceType: String,
   status: {
     type: String,
-    enum: ['pending', 'processing', 'quoted', 'failed'],
     default: 'processing'
   },
-  formData: {
-    type: Object,
-    required: true
-  },
+  formData: Object,
   error: String
 }, {
-  timestamps: true,
-  collection: 'ground_requests'
+  timestamps: true
 });
 
-// Generate request number
+// Auto-generate requestNumber
 groundRequestSchema.pre('save', async function(next) {
   if (!this.requestNumber) {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const count = await mongoose.model('GroundRequest').countDocuments() + 1;
-    const number = String(count).padStart(4, '0');
-    this.requestNumber = `REQ-${year}${month}-${number}`;
+    this.requestNumber = `REQ-${Date.now()}`;
   }
   next();
 });
