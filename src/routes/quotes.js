@@ -9,6 +9,10 @@ const ProviderFactory = require('../services/providers/ProviderFactory');
 const { authorize } = require('../middleware/authorize');
 const Booking = require('../models/Booking'); // ADDED
 
+// ✅ NEW MODELS for ground integration
+const GroundRequest = require('../models/GroundRequest');
+const GroundQuote = require('../models/GroundQuote');
+
 // ---------------------------------------------------------
 // Define processQuoteRequest here (needed by /create route)
 // ---------------------------------------------------------
@@ -16,19 +20,17 @@ async function processQuoteRequest(requestId) {
   try {
     console.log('[quotes] Processing quote request:', requestId);
 
-    // (Optional but helpful) mark the request as processing if it exists
     await Request.findByIdAndUpdate(
       requestId,
       { status: 'processing', processingStartedAt: new Date() },
       { new: true }
     );
 
-    // TODO: Implement your actual provider processing here.
+    // TODO: Implement provider processing
 
     console.log('[quotes] Finished (skeleton) processing for:', requestId);
   } catch (error) {
     console.error('[quotes] Error processing quote:', error);
-    // best-effort status update (don’t throw here to avoid unhandled rejection in /create)
     try {
       await Request.findByIdAndUpdate(
         requestId,
@@ -46,7 +48,6 @@ router.post('/init', async (req, res) => {
     const year = new Date().getFullYear();
     const Sequence = require('../models/Sequence');
 
-    // Generate base sequence
     const reqSeq = await Sequence.findOneAndUpdate(
       { type: 'REQ', year },
       { $inc: { counter: 1 } },
@@ -55,68 +56,249 @@ router.post('/init', async (req, res) => {
 
     const sequenceNumber = reqSeq.counter;
 
-    // Generate all three IDs with same sequence number
     const ids = {
       requestId: `REQ-${year}-${sequenceNumber}`,
       quoteId: `Q-${year}-${sequenceNumber}`,
       costId: `COST-${year}-${sequenceNumber}`
     };
 
-    res.json({
-      success: true,
-      ...ids
-    });
+    res.json({ success: true, ...ids });
   } catch (err) {
     console.error('Init quote error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to initialize quote'
-    });
+    res.status(500).json({ success: false, error: 'Failed to initialize quote' });
   }
 });
 
+// ---------------------------------------------------------
+// 🔹 UNIFIED ENDPOINTS (replace old /recent)
+// ---------------------------------------------------------
+
 /**
- * STEP 7 — Unified Recent Quotes (all modes)
+ * UNIFIED Recent Quotes - Shows BOTH air and ground quotes
  * GET /api/quotes/recent?limit=10
  */
 router.get('/recent', authorize(), async (req, res) => {
   try {
     const { limit = 10 } = req.query;
+    const limitNum = parseInt(limit, 10);
 
-    // Limit visibility for non-admins
     const query = {};
     if (req.user.role !== 'system_admin') {
       query.userId = req.user._id;
     }
 
-    const requests = await Request.find(query)
-      .sort('-createdAt')
-      .limit(parseInt(limit, 10))
-      .lean();
+    const [airQuotes, groundQuotes] = await Promise.all([
+      Request.find(query).sort('-createdAt').limit(limitNum).lean(),
+      GroundRequest.find(query).sort('-createdAt').limit(limitNum).lean()
+    ]);
 
-    // Attach booking status for each request
-    const requestsWithStatus = await Promise.all(
-      requests.map(async (request) => {
-        const booking = await Booking.findOne({ requestId: request._id }).lean();
-        return {
-          ...request,
-          isBooked: !!booking,
-          bookingId: booking?.bookingId
-        };
-      })
-    );
+    const allQuotes = [];
 
-    res.json({ success: true, requests: requestsWithStatus });
+    for (const quote of airQuotes) {
+      const booking = await Booking.findOne({ requestId: quote._id }).lean();
+      allQuotes.push({
+        _id: quote._id,
+        requestNumber: quote.requestNumber,
+        mode: 'air',
+        origin: quote.shipment?.origin,
+        destination: quote.shipment?.destination,
+        weight: quote.shipment?.cargo?.totalWeight,
+        pieces: quote.shipment?.cargo?.totalPieces,
+        status: quote.status,
+        isBooked: !!booking,
+        bookingId: booking?.bookingId,
+        createdAt: quote.createdAt,
+        hasCosts: false
+      });
+    }
+
+    for (const quote of groundQuotes) {
+      const booking = await Booking.findOne({ requestId: quote._id }).lean();
+      const bestQuote = await GroundQuote.findOne({
+        requestId: quote._id,
+        status: 'active'
+      }).sort('customerPrice.total').lean();
+
+      allQuotes.push({
+        _id: quote._id,
+        requestNumber: quote.requestNumber,
+        mode: 'ground',
+        serviceType: quote.serviceType || 'ltl',
+        origin: {
+          city: quote.formData?.originCity,
+          state: quote.formData?.originState,
+          zipCode: quote.formData?.originZip
+        },
+        destination: {
+          city: quote.formData?.destCity,
+          state: quote.formData?.destState,
+          zipCode: quote.formData?.destZip
+        },
+        weight: quote.formData?.commodities?.reduce((sum, c) => sum + (c.quantity * c.weight), 0) || 0,
+        pieces: quote.formData?.commodities?.reduce((sum, c) => sum + c.quantity, 0) || 0,
+        status: quote.status,
+        isBooked: !!booking,
+        bookingId: booking?.bookingId,
+        createdAt: quote.createdAt,
+        bestPrice: bestQuote?.customerPrice?.total,
+        carrierCount: await GroundQuote.countDocuments({ requestId: quote._id, status: 'active' })
+      });
+    }
+
+    allQuotes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const finalQuotes = allQuotes.slice(0, limitNum);
+
+    res.json({
+      success: true,
+      quotes: finalQuotes,
+      counts: { air: airQuotes.length, ground: groundQuotes.length, total: finalQuotes.length }
+    });
   } catch (error) {
     console.error('Error fetching recent quotes:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Create new quote request
+/**
+ * Get specific quote details (air or ground)
+ * GET /api/quotes/details/:id
+ */
+router.get('/details/:id', authorize(), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let quote = await Request.findById(id).lean();
+    let mode = 'air';
+    let rates = [];
+
+    if (quote) {
+      const costs = await Cost.find({ requestId: id, status: 'completed' }).lean();
+      rates = costs.map(c => ({
+        provider: c.provider,
+        carrier: c.carrier,
+        service: c.service,
+        cost: c.costs.totalCost,
+        transitTime: c.transitTime
+      }));
+    } else {
+      quote = await GroundRequest.findById(id).lean();
+      mode = 'ground';
+      if (quote) {
+        const groundQuotes = await GroundQuote.find({ requestId: id, status: 'active' })
+          .sort('customerPrice.total').lean();
+
+        rates = groundQuotes.map(q => ({
+          quoteId: q._id,
+          carrier: q.carrier.name,
+          service: q.carrier.service || 'Standard LTL',
+          price: q.customerPrice.total,
+          rawCost: q.rawCost.total,
+          markup: q.markup.totalMarkup,
+          transitDays: q.transit.days,
+          guaranteed: q.transit.guaranteed
+        }));
+      }
+    }
+
+    if (!quote) {
+      return res.status(404).json({ success: false, error: 'Quote not found' });
+    }
+
+    const booking = await Booking.findOne({ requestId: id }).lean();
+
+    res.json({ success: true, quote: { ...quote, mode, rates, isBooked: !!booking, booking } });
+  } catch (error) {
+    console.error('Error fetching quote details:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * Book a quote (air or ground)
+ * POST /api/quotes/book
+ */
+router.post('/book', authorize(), async (req, res) => {
+  try {
+    const { requestId, quoteId, mode } = req.body;
+
+    const existingBooking = await Booking.findOne({ requestId });
+    if (existingBooking) {
+      return res.status(400).json({ success: false, error: 'This quote has already been booked', bookingId: existingBooking.bookingId });
+    }
+
+    let quoteData;
+    let shipmentData;
+
+    if (mode === 'ground') {
+      const groundQuote = await GroundQuote.findById(quoteId).lean();
+      const groundRequest = await GroundRequest.findById(requestId).lean();
+      if (!groundQuote || !groundRequest) {
+        return res.status(404).json({ success: false, error: 'Quote not found' });
+      }
+
+      quoteData = { carrier: groundQuote.carrier.name, service: groundQuote.carrier.service, price: groundQuote.customerPrice.total, transitDays: groundQuote.transit.days };
+      shipmentData = groundRequest.formData;
+
+      await GroundQuote.findByIdAndUpdate(quoteId, { status: 'booked', selected: true, selectedAt: new Date(), bookedAt: new Date() });
+    } else {
+      const airRequest = await Request.findById(requestId).lean();
+      const cost = await Cost.findById(quoteId).lean();
+      if (!airRequest || !cost) {
+        return res.status(404).json({ success: false, error: 'Quote not found' });
+      }
+
+      quoteData = { carrier: cost.carrier, service: cost.service, price: cost.costs.totalCost, transitTime: cost.transitTime };
+      shipmentData = airRequest.shipment;
+    }
+
+    const bookingId = `BK-${Date.now()}`;
+    const confirmationNumber = `CON-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 100000)).padStart(5, '0')}`;
+    const pickupNumber = `PU-${String(Math.floor(Math.random() * 1000000)).padStart(7, '0')}`;
+
+    const booking = await Booking.create({
+      bookingId,
+      confirmationNumber,
+      pickupNumber,
+      requestId,
+      mode: mode || 'ground',
+      serviceType: quoteData.service,
+      carrier: quoteData.carrier,
+      price: quoteData.price,
+      status: 'CONFIRMED',
+      shipmentData,
+      userId: req.user._id,
+      userEmail: req.user.email
+    });
+
+    if (mode === 'ground') {
+      await GroundRequest.findByIdAndUpdate(requestId, { status: 'booked' });
+    } else {
+      await Request.findByIdAndUpdate(requestId, { status: 'booked' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Booking confirmed!',
+      booking: {
+        bookingId: booking.bookingId,
+        confirmationNumber: booking.confirmationNumber,
+        pickupNumber: booking.pickupNumber,
+        carrier: booking.carrier,
+        price: booking.price,
+        status: booking.status
+      }
+    });
+  } catch (error) {
+    console.error('Booking error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------------------------------------------------------
+// Existing create route remains untouched
+// ---------------------------------------------------------
 router.post('/create', authorize(), async (req, res) => {
   try {
-    // Create request document
     const request = await Request.create({
       userId: req.user._id,
       userEmail: req.user.email,
@@ -130,10 +312,8 @@ router.post('/create', authorize(), async (req, res) => {
       status: 'pending'
     });
 
-    // Start async rate fetching (don’t await—return immediately)
     processQuoteRequest(request._id);
 
-    // Return immediately
     res.json({
       success: true,
       data: {
@@ -145,10 +325,7 @@ router.post('/create', authorize(), async (req, res) => {
     });
   } catch (error) {
     console.error('Quote creation error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
