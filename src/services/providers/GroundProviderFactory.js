@@ -2,6 +2,7 @@
 const STGProvider = require('./ground/STGProvider');
 const SEFLProvider = require('./ground/SEFLProvider');
 const CarrierAccount = require('../../models/CarrierAccount');
+const AAACooperProvider = require('./ground/AAACooperProvider');
 
 class GroundProviderFactory {
   constructor() {
@@ -9,6 +10,7 @@ class GroundProviderFactory {
     this.providerClasses = {
       'STG': STGProvider,
       'SEFL': SEFLProvider,
+      'AAA_COOPER': AAACooperProvider,
       // Add more as you create them:
       // 'FEDEX_FREIGHT': FedExFreightProvider,
       // 'OLD_DOMINION': OldDominionProvider,
@@ -23,7 +25,7 @@ class GroundProviderFactory {
     // Control which providers are active for company accounts
     this.activeProviders = process.env.ACTIVE_GROUND_CARRIERS 
       ? process.env.ACTIVE_GROUND_CARRIERS.split(',')
-      : ['STG', 'SEFL'];
+      : ['STG', 'SEFL''AAA_COOPER'];
   }
 
   // Get a specific provider instance
@@ -41,6 +43,7 @@ class GroundProviderFactory {
     // Map carrier account codes to provider codes
     const carrierToProvider = {
       'SEFL': 'SEFL',
+      'AAA_COOPER': 'AAA_COOPER',
       'FEDEX_FREIGHT': 'FEDEX_FREIGHT',
       'OLD_DOMINION': 'OLD_DOMINION',
       'XPO': 'XPO',
