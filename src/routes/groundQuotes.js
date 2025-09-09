@@ -1,171 +1,134 @@
-// src/routes/groundQuotes.js - SIMPLIFIED (now with FTL/Expedited additions)
+// src/routes/groundQuotes.js - COMPLETE VERSION
 const router = require('express').Router();
+const crypto = require('crypto');
 const GroundRequest = require('../models/GroundRequest');
+const GroundQuote = require('../models/GroundQuote');
 const GroundCost = require('../models/GroundCost');
 const MagicLinkToken = require('../models/MagicLinkToken');
-const emailService = require('../services/emailService');
-const GroundQuote = require('../models/GroundQuote');
 const auth = require('../middleware/auth');
 const { processGroundQuote } = require('../services/ground/processGroundQuote');
-
-// ✅ NEW: carrierApi for FTL/Expedited flow
 const carrierApi = require('../services/carrierApi');
+const emailService = require('../services/emailService');
 
-// Create request - that's it
+// Main create endpoint - handles all service types
 router.post('/create', auth, async (req, res) => {
   try {
-    // Just save the request
+    const { formData, serviceType } = req.body;
+    
+    // Create the base request
     const groundRequest = new GroundRequest({
       userId: req.userId,
-      serviceType: req.body.serviceType || 'ltl',
-      status: 'processing',
-      formData: req.body.formData
+      serviceType: serviceType || 'ltl',
+      status: serviceType === 'ltl' ? 'processing' : 'pending_carrier_response',
+      formData: formData,
+      additionalStops: formData.additionalStops || []
     });
     
     await groundRequest.save();
     
-    // Return the ID
-    res.json({
-      success: true,
-      data: {
-        _id: groundRequest._id.toString(),
-        requestNumber: groundRequest.requestNumber,
-        status: 'processing'
+    // Handle based on service type
+    if (serviceType === 'ltl') {
+      // LTL - Process automatically
+      res.json({
+        success: true,
+        data: {
+          _id: groundRequest._id.toString(),
+          requestNumber: groundRequest.requestNumber,
+          status: 'processing'
+        }
+      });
+      
+      // Process in background
+      processGroundQuote(groundRequest._id);
+      
+    } else if (serviceType === 'ftl' || serviceType === 'expedited') {
+      // FTL/Expedited - Send to carriers
+      const carriers = await carrierApi.getCarriersForService(serviceType);
+      
+      if (!carriers.carriers || carriers.carriers.length === 0) {
+        groundRequest.status = 'failed';
+        groundRequest.error = 'No carriers available';
+        await groundRequest.save();
+        
+        return res.status(400).json({
+          success: false,
+          error: 'No carriers available for this service type'
+        });
       }
-    });
-    
-    // Process in background
-    processGroundQuote(groundRequest._id);
+      
+      // Set response deadline
+      const responseDeadline = new Date();
+      if (serviceType === 'expedited') {
+        responseDeadline.setMinutes(responseDeadline.getMinutes() + 15);
+      } else {
+        responseDeadline.setHours(responseDeadline.getHours() + 1);
+      }
+      
+      const tokenExpiry = new Date();
+      tokenExpiry.setHours(tokenExpiry.getHours() + 2);
+      
+      // Create invitations for each carrier
+      const invitations = [];
+      for (const carrier of carriers.carriers) {
+        // Generate unique token
+        const token = crypto.randomBytes(32).toString('hex');
+        
+        // Create magic link token
+        const magicLink = new MagicLinkToken({
+          token: token,
+          requestId: groundRequest._id,
+          carrierId: carrier.id,
+          carrierName: carrier.name,
+          carrierEmail: carrier.email,
+          serviceType: serviceType,
+          responseDeadline: responseDeadline,
+          expiresAt: tokenExpiry
+        });
+        
+        await magicLink.save();
+        
+        // Add to request invitations
+        const invitation = {
+          carrierId: carrier.id,
+          carrierName: carrier.name,
+          carrierEmail: carrier.email,
+          magicToken: token,
+          tokenExpiry: tokenExpiry,
+          responseDeadline: responseDeadline,
+          emailSentAt: new Date(),
+          status: 'invited'
+        };
+        
+        groundRequest.carrierInvitations.push(invitation);
+        invitations.push({ carrier, token: magicLink });
+        
+        // Send email (don't await - do it async)
+        emailService.sendCarrierQuoteRequest(carrier, groundRequest, magicLink)
+          .catch(err => console.error(`Failed to email ${carrier.name}:`, err));
+      }
+      
+      await groundRequest.save();
+      
+      res.json({
+        success: true,
+        data: {
+          _id: groundRequest._id.toString(),
+          requestNumber: groundRequest.requestNumber,
+          status: 'pending_carrier_response',
+          carriersNotified: carriers.carriers.length,
+          responseDeadline: responseDeadline
+        }
+      });
+      
+      console.log(`📧 Sent ${serviceType.toUpperCase()} quote request ${groundRequest.requestNumber} to ${carriers.carriers.length} carriers`);
+    }
     
   } catch (error) {
+    console.error('Create request error:', error);
     res.status(500).json({
       success: false,
       error: error.message
     });
-  }
-});
-
-// Get results - just read from DB
-router.get('/:requestId/results', auth, async (req, res) => {
-  try {
-    const request = await GroundRequest.findById(req.params.requestId);
-    if (!request) {
-      return res.status(404).json({ success: false, error: 'Not found' });
-    }
-    
-    // Get quotes from DB
-    const quotes = await GroundQuote.find({
-      requestId: request._id,
-      status: 'active'
-    }).sort('customerPrice.total');
-    
-    // Return what's in DB
-    res.json({
-      success: true,
-      requestId: request._id.toString(),
-      requestNumber: request.requestNumber,
-      status: request.status,
-      formData: request.formData,
-      quotes: quotes.map(q => ({
-        quoteId: q._id.toString(),
-        carrier: q.carrier.name,
-        service: q.carrier.service,
-        price: q.customerPrice.total,
-        transitDays: q.transit.days,
-        raw_cost: q.rawCost.total,
-        final_price: q.customerPrice.total
-      }))
-    });
-    
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-
-// ===============================
-// ✅ ADDED: FTL/Expedited flow
-// ===============================
-
-// Create FTL/Expedited request with carrier emails
-router.post('/create-carrier-request', auth, async (req, res) => {
-  try {
-    const { formData, serviceType } = req.body;
-    
-    // Create the request
-    const request = new GroundRequest({
-      userId: req.userId,
-      serviceType, // 'ftl' or 'expedited'
-      status: 'pending_carrier_response',
-      formData,
-      additionalStops: formData.additionalStops || []
-    });
-    
-    // Get active carriers for this service
-    const carriersResult = await carrierApi.getCarriersForService(serviceType);
-    const carriers = carriersResult.carriers || [];
-    
-    if (carriers.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No carriers available for this service type'
-      });
-    }
-    
-    // Create invitations for each carrier
-    const responseDeadline = new Date();
-    if (serviceType === 'expedited') {
-      responseDeadline.setMinutes(responseDeadline.getMinutes() + 15);
-    } else {
-      responseDeadline.setHours(responseDeadline.getHours() + 1);
-    }
-    
-    const tokenExpiry = new Date();
-    tokenExpiry.setHours(tokenExpiry.getHours() + 2);
-    
-    // Create invitation for each carrier
-    for (const carrier of carriers) {
-      // Create magic link token
-      const token = await MagicLinkToken.create({
-        requestId: request._id,
-        carrierId: carrier.id,
-        carrierName: carrier.name,
-        carrierEmail: carrier.email,
-        serviceType,
-        responseDeadline,
-        expiresAt: tokenExpiry
-      });
-      
-      // Add to request invitations
-      request.carrierInvitations.push({
-        carrierId: carrier.id,
-        carrierName: carrier.name,
-        carrierEmail: carrier.email,
-        magicToken: token.token,
-        tokenExpiry,
-        responseDeadline,
-        emailSentAt: new Date(),
-        status: 'invited'
-      });
-      
-      // Send email (async, don't wait)
-      emailService.sendCarrierQuoteRequest(carrier, request, token)
-        .catch(err => console.error(`Failed to email ${carrier.name}:`, err));
-    }
-    
-    await request.save();
-    
-    res.json({
-      success: true,
-      requestId: request._id,
-      requestNumber: request.requestNumber,
-      carriersInvited: carriers.length,
-      responseDeadline
-    });
-    
-  } catch (error) {
-    console.error('Error creating carrier request:', error);
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -195,11 +158,26 @@ router.get('/carrier/view/:token', async (req, res) => {
     if (!magicLink.firstClickAt) {
       magicLink.firstClickAt = new Date();
     }
-    magicLink.clickCount++;
+    magicLink.clickCount = (magicLink.clickCount || 0) + 1;
+    
+    // Track IP
+    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
+    if (!magicLink.ipAddresses) magicLink.ipAddresses = [];
+    if (!magicLink.ipAddresses.includes(ip)) {
+      magicLink.ipAddresses.push(ip);
+    }
+    
     await magicLink.save();
     
     // Get request details
     const request = await GroundRequest.findById(magicLink.requestId);
+    
+    if (!request) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Request not found' 
+      });
+    }
     
     // Update invitation status to 'viewed'
     const invitation = request.carrierInvitations.find(
@@ -211,6 +189,11 @@ router.get('/carrier/view/:token', async (req, res) => {
       await request.save();
     }
     
+    // Calculate time remaining
+    const now = new Date();
+    const deadline = new Date(magicLink.responseDeadline);
+    const minutesRemaining = Math.max(0, Math.floor((deadline - now) / 60000));
+    
     // Return request details for carrier to quote
     res.json({
       success: true,
@@ -220,7 +203,10 @@ router.get('/carrier/view/:token', async (req, res) => {
         formData: request.formData,
         additionalStops: request.additionalStops,
         responseDeadline: magicLink.responseDeadline,
-        carrierName: magicLink.carrierName
+        minutesRemaining: minutesRemaining,
+        carrierName: magicLink.carrierName,
+        isExpired: minutesRemaining === 0,
+        hasSubmitted: magicLink.used
       }
     });
     
@@ -239,15 +225,46 @@ router.post('/carrier/submit/:token', async (req, res) => {
     // Validate token
     const magicLink = await MagicLinkToken.findOne({ token });
     
-    if (!magicLink || magicLink.used) {
+    if (!magicLink) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Invalid or already used link' 
+        error: 'Invalid link' 
+      });
+    }
+    
+    if (magicLink.used) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Quote already submitted for this request' 
+      });
+    }
+    
+    if (new Date() > magicLink.expiresAt) {
+      return res.status(410).json({ 
+        success: false, 
+        error: 'This link has expired' 
       });
     }
     
     // Get request
     const request = await GroundRequest.findById(magicLink.requestId);
+    
+    if (!request) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Request not found' 
+      });
+    }
+    
+    // Calculate total cost
+    let totalCost = 0;
+    if (quoteData.totalCost) {
+      totalCost = parseFloat(quoteData.totalCost);
+    } else {
+      totalCost = (parseFloat(quoteData.linehaul || 0) + 
+                   parseFloat(quoteData.fuelSurcharge || 0) + 
+                   parseFloat(quoteData.totalAccessorials || 0));
+    }
     
     // Create cost entry
     const cost = new GroundCost({
@@ -265,12 +282,11 @@ router.post('/carrier/submit/:token', async (req, res) => {
         magicToken: token
       },
       
-      // Parse the quote data
       costs: {
-        baseFreight: quoteData.linehaul || quoteData.totalCost || 0,
-        fuelSurcharge: quoteData.fuelSurcharge || 0,
-        accessorials: quoteData.totalAccessorials || 0,
-        totalCost: quoteData.totalCost || 0,
+        baseFreight: parseFloat(quoteData.linehaul || totalCost || 0),
+        fuelSurcharge: parseFloat(quoteData.fuelSurcharge || 0),
+        accessorials: parseFloat(quoteData.totalAccessorials || 0),
+        totalCost: totalCost,
         currency: 'USD'
       },
       
@@ -278,17 +294,23 @@ router.post('/carrier/submit/:token', async (req, res) => {
         linehaul: quoteData.linehaul,
         fuelSurcharge: quoteData.fuelSurcharge,
         fuelPercentage: quoteData.fuelPercentage,
+        detention: quoteData.detention,
+        layover: quoteData.layover,
+        tarp: quoteData.tarp,
+        teamDriver: quoteData.teamDriver,
         totalAccessorials: quoteData.totalAccessorials,
         freeTimeLoadingHours: quoteData.freeTimeLoadingHours || 2,
         freeTimeUnloadingHours: quoteData.freeTimeUnloadingHours || 2,
         detentionRatePerHour: quoteData.detentionRatePerHour,
         equipmentType: quoteData.equipmentType,
-        specialConditions: quoteData.specialConditions
+        equipmentNotes: quoteData.equipmentNotes,
+        specialConditions: quoteData.specialConditions,
+        internalNotes: quoteData.internalNotes
       },
       
       transit: {
-        days: quoteData.transitDays || 2,
-        businessDays: quoteData.transitDays || 2,
+        days: parseInt(quoteData.transitDays) || 2,
+        businessDays: parseInt(quoteData.transitDays) || 2,
         guaranteed: quoteData.guaranteed || false
       },
       
@@ -315,14 +337,129 @@ router.post('/carrier/submit/:token', async (req, res) => {
       await request.save();
     }
     
+    // Check if all carriers have responded
+    const allResponded = request.carrierInvitations.every(
+      inv => inv.status === 'submitted' || inv.status === 'declined'
+    );
+    
+    if (allResponded) {
+      request.status = 'quoted';
+      await request.save();
+    }
+    
+    // Send confirmation email
+    emailService.sendCarrierQuoteConfirmation(
+      magicLink.carrierEmail,
+      magicLink.carrierName,
+      request.requestNumber,
+      totalCost
+    ).catch(err => console.error('Confirmation email error:', err));
+    
     res.json({
       success: true,
-      message: 'Quote submitted successfully',
+      message: 'Quote submitted successfully. Thank you for your response.',
       costId: cost._id
     });
     
   } catch (error) {
     console.error('Error submitting quote:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Carrier declines to quote
+router.post('/carrier/decline/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { reason } = req.body;
+    
+    const magicLink = await MagicLinkToken.findOne({ token });
+    
+    if (!magicLink || magicLink.used) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid or already used link' 
+      });
+    }
+    
+    const request = await GroundRequest.findById(magicLink.requestId);
+    
+    const invitation = request.carrierInvitations.find(
+      inv => inv.magicToken === token
+    );
+    if (invitation) {
+      invitation.status = 'declined';
+      invitation.declinedAt = new Date();
+      invitation.declineReason = reason;
+      await request.save();
+    }
+    
+    magicLink.used = true;
+    magicLink.usedAt = new Date();
+    await magicLink.save();
+    
+    res.json({
+      success: true,
+      message: 'Thank you for letting us know.'
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get carrier response status (for employee dashboard)
+router.get('/carrier-responses/:requestId', auth, async (req, res) => {
+  try {
+    const request = await GroundRequest.findById(req.params.requestId);
+    
+    if (!request) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Request not found' 
+      });
+    }
+    
+    const costs = await GroundCost.find({ 
+      requestId: req.params.requestId 
+    }).sort('costs.totalCost');
+    
+    const summary = {
+      requestNumber: request.requestNumber,
+      serviceType: request.serviceType,
+      status: request.status,
+      formData: request.formData,
+      carriersSummary: {
+        invited: request.carrierInvitations?.length || 0,
+        viewed: request.carrierInvitations?.filter(i => i.status === 'viewed' || i.status === 'submitted').length || 0,
+        submitted: request.carrierInvitations?.filter(i => i.status === 'submitted').length || 0,
+        declined: request.carrierInvitations?.filter(i => i.status === 'declined').length || 0,
+        avgResponseTime: 0
+      },
+      costs: costs.map(c => ({
+        id: c._id,
+        carrier: c.carrierName,
+        totalCost: c.costs.totalCost,
+        transitDays: c.transit.days,
+        submissionSource: c.submissionSource,
+        status: c.status,
+        submittedAt: c.createdAt
+      })),
+      deadline: request.carrierInvitations?.[0]?.responseDeadline
+    };
+    
+    // Calculate avg response time
+    const submitted = request.carrierInvitations?.filter(i => i.responseTimeMinutes) || [];
+    if (submitted.length > 0) {
+      summary.carriersSummary.avgResponseTime = Math.round(
+        submitted.reduce((sum, i) => sum + i.responseTimeMinutes, 0) / submitted.length
+      );
+    }
+    
+    res.json({ success: true, ...summary });
+    
+  } catch (error) {
+    console.error('Error getting carrier responses:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -337,32 +474,35 @@ router.post('/manual-carrier-quote', auth, async (req, res) => {
       return res.status(404).json({ error: 'Request not found' });
     }
     
+    const totalCost = parseFloat(quoteData.totalCost || 0);
+    
     const cost = new GroundCost({
       requestId: request._id,
       requestNumber: request.requestNumber,
       provider: carrierName,
-      carrierName,
+      carrierName: carrierName,
       serviceType: request.serviceType,
       
       submissionSource: 'manual_entry',
       submittedBy: {
         employeeId: req.userId,
-        employeeName: req.user.name
+        employeeName: req.user?.name || 'Employee'
       },
       
       costs: {
-        baseFreight: quoteData.linehaul || quoteData.totalCost || 0,
-        fuelSurcharge: quoteData.fuelSurcharge || 0,
-        accessorials: quoteData.totalAccessorials || 0,
-        totalCost: quoteData.totalCost || 0,
+        baseFreight: parseFloat(quoteData.linehaul || totalCost),
+        fuelSurcharge: parseFloat(quoteData.fuelSurcharge || 0),
+        accessorials: parseFloat(quoteData.totalAccessorials || 0),
+        totalCost: totalCost,
         currency: 'USD'
       },
       
       carrierQuoteDetails: quoteData,
       
       transit: {
-        days: quoteData.transitDays || 2,
-        businessDays: quoteData.transitDays || 2
+        days: parseInt(quoteData.transitDays) || 2,
+        businessDays: parseInt(quoteData.transitDays) || 2,
+        guaranteed: quoteData.guaranteed || false
       },
       
       status: 'pending_review'
@@ -372,7 +512,7 @@ router.post('/manual-carrier-quote', auth, async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Manual quote added',
+      message: 'Manual quote added successfully',
       costId: cost._id
     });
     
@@ -382,44 +522,35 @@ router.post('/manual-carrier-quote', auth, async (req, res) => {
   }
 });
 
-// Get carrier response status (for employee dashboard)
-router.get('/carrier-responses/:requestId', auth, async (req, res) => {
+// Get results (existing endpoint for compatibility)
+router.get('/:requestId/results', auth, async (req, res) => {
   try {
     const request = await GroundRequest.findById(req.params.requestId);
-    const costs = await GroundCost.find({ 
-      requestId: req.params.requestId 
-    }).sort('costs.totalCost');
-    
-    const summary = {
-      requestNumber: request.requestNumber,
-      serviceType: request.serviceType,
-      status: request.status,
-      carriersSummary: {
-        invited: request.carrierInvitations.length,
-        viewed: request.carrierInvitations.filter(i => i.status === 'viewed').length,
-        submitted: request.carrierInvitations.filter(i => i.status === 'submitted').length,
-        avgResponseTime: 0
-      },
-      costs: costs.map(c => ({
-        id: c._id,
-        carrier: c.carrierName,
-        totalCost: c.costs.totalCost,
-        transitDays: c.transit.days,
-        submissionSource: c.submissionSource,
-        status: c.status
-      })),
-      deadline: request.carrierInvitations[0]?.responseDeadline
-    };
-    
-    // Calculate avg response time
-    const submitted = request.carrierInvitations.filter(i => i.responseTimeMinutes);
-    if (submitted.length > 0) {
-      summary.carriersSummary.avgResponseTime = Math.round(
-        submitted.reduce((sum, i) => sum + i.responseTimeMinutes, 0) / submitted.length
-      );
+    if (!request) {
+      return res.status(404).json({ success: false, error: 'Not found' });
     }
     
-    res.json({ success: true, ...summary });
+    const quotes = await GroundQuote.find({
+      requestId: request._id,
+      status: 'active'
+    }).sort('customerPrice.total');
+    
+    res.json({
+      success: true,
+      requestId: request._id.toString(),
+      requestNumber: request.requestNumber,
+      status: request.status,
+      formData: request.formData,
+      quotes: quotes.map(q => ({
+        quoteId: q._id.toString(),
+        carrier: q.carrier.name,
+        service: q.carrier.service,
+        price: q.customerPrice.total,
+        transitDays: q.transit.days,
+        raw_cost: q.rawCost.total,
+        final_price: q.customerPrice.total
+      }))
+    });
     
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
