@@ -1,26 +1,90 @@
 // src/services/providers/ground/AAACooperProvider.js
 const BaseGroundProvider = require('./BaseGroundProvider');
-const axios = require('axios');
+const soap = require('soap');
 
 class AAACooperProvider extends BaseGroundProvider {
   constructor() {
     super('AAA Cooper Transportation', 'AAA_COOPER');
     
-    // Configuration from environment
-    this.baseUrl = process.env.AAACT_BASE_URL || 'https://www.aaacooper.com/web-services';
+    // SOAP Configuration
+    this.wsdlUrl = process.env.AAACT_WSDL_URL || 'https://www.aaacooper.com/docs/web-services/rate-estimate-web-service.wsdl';
+    this.endpointUrl = process.env.AAACT_ENDPOINT_URL || 'https://api2.aaacooper.com:8200/sapi30/wsGenEst';
+    this.testEndpointUrl = process.env.AAACT_TEST_ENDPOINT_URL || 'https://testapi2.aaacooper.com:8200/sapi30/wsGenEst';
     this.apiToken = process.env.AAACT_API_TOKEN;
-    this.accountNumber = process.env.AAACT_ACCOUNT_NUMBER;
+    this.customerNumber = process.env.AAACT_CUSTOMER_NUMBER || '';
+    this.useTestEnvironment = process.env.AAACT_USE_TEST === 'true';
     
-    // Create axios instance with default headers
-    this.http = axios.create({
-      baseURL: this.baseUrl,
-      timeout: 30000,
-      headers: {
-        'Authorization': `Bearer ${this.apiToken}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    this.soapClient = null;
+    
+    // Accessorial code mappings
+    this.accessorialMappings = {
+      liftgatePickup: 'LGP',
+      liftgateDelivery: 'LGD',
+      residentialPickup: 'RSP',
+      residentialDelivery: 'RSD',
+      insidePickup: 'ISP',
+      insideDelivery: 'ISD',
+      limitedAccessPickup: 'RAP',  // Restricted Access Pickup
+      limitedAccessDelivery: 'RAD', // Restricted Access Delivery
+      appointmentPickup: 'NCM',     // Notify Charge (appointments)
+      appointmentDelivery: 'NCM',
+      constructionPickup: 'CSP',
+      constructionDelivery: 'CSD',
+      protectFromFreeze: 'PFF',
+      airportPickup: 'APP',
+      airportDelivery: 'APD'
+    };
+  }
+
+  async initializeSoapClient() {
+    if (this.soapClient) {
+      return this.soapClient;
+    }
+
+    try {
+      console.log('🔌 Initializing AAA Cooper SOAP client...');
+      console.log(`   WSDL: ${this.wsdlUrl}`);
+      console.log(`   Endpoint: ${this.useTestEnvironment ? this.testEndpointUrl : this.endpointUrl}`);
+      
+      // Create SOAP client options
+      const options = {
+        endpoint: this.useTestEnvironment ? this.testEndpointUrl : this.endpointUrl,
+        forceSoap12Headers: false, // Use SOAP 1.1
+        disableCache: true,
+        wsdl_options: {
+          timeout: 30000
+        }
+      };
+
+      // Create SOAP client from WSDL
+      this.soapClient = await soap.createClientAsync(this.wsdlUrl, options);
+      
+      console.log('✅ AAA Cooper SOAP client initialized');
+      
+      // Log available methods for debugging
+      const services = this.soapClient.describe();
+      const serviceNames = Object.keys(services);
+      console.log('📋 Available services:', serviceNames);
+      
+      // Usually there's one service with one port
+      if (serviceNames.length > 0) {
+        const serviceName = serviceNames[0];
+        const ports = Object.keys(services[serviceName]);
+        console.log(`   Service: ${serviceName}, Ports:`, ports);
+        
+        if (ports.length > 0) {
+          const portName = ports[0];
+          const methods = Object.keys(services[serviceName][portName]);
+          console.log(`   Available methods:`, methods);
+        }
       }
-    });
+      
+      return this.soapClient;
+      
+    } catch (error) {
+      console.error('❌ Failed to initialize SOAP client:', error.message);
+      throw error;
+    }
   }
 
   async getRates(requestData) {
@@ -31,88 +95,94 @@ class AAACooperProvider extends BaseGroundProvider {
         return null;
       }
 
-      console.log('🚚 AAA Cooper: Fetching rates...');
+      console.log('🚚 AAA Cooper: Fetching rates via SOAP...');
 
-      const payload = this.buildRequest(requestData);
-      console.log('📤 AAA Cooper request:', JSON.stringify(payload, null, 2));
+      // Initialize SOAP client
+      await this.initializeSoapClient();
 
-      const { data } = await this.http.post('/rate-estimate', payload);
-      console.log('📥 AAA Cooper response:', JSON.stringify(data, null, 2));
+      // Build SOAP request
+      const soapRequest = this.buildSoapRequest(requestData);
+      console.log('📤 AAA Cooper SOAP request:', JSON.stringify(soapRequest, null, 2));
 
-      return this.parseResponse(data);
+      // Call the SOAP method
+      // The method name might be 'wsGenRateEstimate' based on the namespace
+      const [result, rawResponse, soapHeader, rawRequest] = await this.soapClient.wsGenRateEstimateAsync(soapRequest);
+      
+      console.log('📥 AAA Cooper SOAP response:', JSON.stringify(result, null, 2));
+
+      // Parse the response
+      return this.parseSoapResponse(result);
       
     } catch (error) {
       if (error.response) {
-        console.error('❌ AAA Cooper API error:', error.response.status, error.response.data);
-        
-        // Handle specific error codes
-        if (error.response.status === 401) {
-          console.error('   Token may be expired or invalid');
-        } else if (error.response.status === 422) {
-          console.error('   Invalid request data (check class/weight/zip)');
-        }
+        console.error('❌ AAA Cooper SOAP error:', error.response.statusCode, error.body);
+      } else if (error.root && error.root.Envelope) {
+        // SOAP Fault
+        const fault = error.root.Envelope.Body.Fault;
+        console.error('❌ AAA Cooper SOAP Fault:', fault);
       } else {
-        console.error('❌ AAA Cooper network error:', error.message);
+        console.error('❌ AAA Cooper error:', error.message);
       }
       
       return this.logError(error, 'getRates');
     }
   }
 
-  buildRequest(requestData) {
+  buildSoapRequest(requestData) {
     // Extract origin and destination
     const origin = requestData.origin || {};
     const destination = requestData.destination || {};
     
-    // Parse pickup date
+    // Format pickup date as MMDDYYYY
     const pickupDate = requestData.pickupDate 
-      ? new Date(requestData.pickupDate).toISOString().split('T')[0]
-      : new Date().toISOString().split('T')[0];
+      ? new Date(requestData.pickupDate)
+      : new Date();
     
-    // Build commodities array
-    const commodities = this.buildCommodities(requestData.commodities || []);
+    const month = String(pickupDate.getMonth() + 1).padStart(2, '0');
+    const day = String(pickupDate.getDate()).padStart(2, '0');
+    const year = pickupDate.getFullYear();
+    const billDate = `${month}${day}${year}`;
     
-    // Map accessorials to AAA Cooper codes
-    const accessorials = this.mapAccessorials(requestData.accessorials || {});
+    // Build commodity lines
+    const commodityLines = this.buildCommodityLines(requestData.commodities || []);
     
-    // Build the request according to AAA Cooper's contract
+    // Build accessorial codes
+    const accessorialCodes = this.buildAccessorialCodes(requestData.accessorials || {});
+    
+    // Build the SOAP request object according to AAA Cooper's schema
     const request = {
-      accountNumber: this.accountNumber || 'DEFAULT',
-      paymentTerms: 'Prepaid', // or 'Collect', 'ThirdParty' based on your needs
-      shipDate: pickupDate,
-      origin: {
-        zip: String(origin.zipCode || ''),
-        city: origin.city || '',
-        state: origin.state || ''
-      },
-      destination: {
-        zip: String(destination.zipCode || ''),
-        city: destination.city || '',
-        state: destination.state || ''
-      },
-      commodities: commodities,
-      accessorials: accessorials
+      Token: this.apiToken,
+      CustomerNumber: this.customerNumber,
+      OriginCity: origin.city || '',
+      OriginState: origin.state || '',
+      OriginZip: String(origin.zipCode || ''),
+      OriginCountryCode: 'USA',
+      DestinationCity: destination.city || '',
+      DestinationState: destination.state || '',
+      DestinationZip: String(destination.zipCode || ''),
+      DestinCountryCode: 'USA',
+      WhoAmI: 'S', // S=Shipper, C=Consignee, 3=Third Party
+      BillDate: billDate,
+      PrePaidCollect: 'P', // P=Prepaid, C=Collect
+      TotalPalletCount: this.calculateTotalPallets(requestData.commodities),
+      AccLine: accessorialCodes,
+      RateEstimateRequestLine: commodityLines
     };
 
-    // Add insurance if needed
+    // Add Full Coverage if insurance is requested
     if (requestData.insurance) {
-      request.insurance = {
-        fullValueCoverage: requestData.insurance.requested || false,
-        declaredValue: requestData.insurance.value || 0
-      };
+      request.FullCoverage = 'Y';
+      request.FullCoverageAmount = String(Math.round(requestData.insurance.value || 0));
     }
 
     return request;
   }
 
-  buildCommodities(items) {
-    return items.map((item, index) => {
-      // Calculate class if not provided
+  buildCommodityLines(commodities) {
+    return commodities.map((item, index) => {
+      // Calculate freight class if not provided
       let freightClass = item.class;
-      if (!freightClass && item.nmfc) {
-        freightClass = this.getClassFromNMFC(item.nmfc);
-      } else if (!freightClass) {
-        // Calculate based on density
+      if (!freightClass) {
         const density = this.calculateDensity(
           item.weight,
           item.length || 48,
@@ -122,171 +192,212 @@ class AAACooperProvider extends BaseGroundProvider {
         freightClass = this.getFreightClass(density);
       }
 
-      return {
-        class: parseInt(freightClass) || 85,
-        weightLbs: Math.ceil(item.weight * (item.quantity || 1)),
-        nmfcItem: item.nmfc || undefined,
-        nmfcSub: item.nmfcSub || undefined,
-        pieces: item.quantity || 1,
-        dimensionsIn: {
-          l: Math.ceil(item.length || 48),
-          w: Math.ceil(item.width || 40),
-          h: Math.ceil(item.height || 40)
-        },
-        stackable: item.stackable !== false,
-        hazmat: this.buildHazmat(item),
-        description: item.description || 'General Freight'
+      const line = {
+        Weight: String(Math.ceil(item.weight * (item.quantity || 1))),
+        Class: String(freightClass),
+        HandlingUnits: String(item.quantity || 1),
+        HandlingUnitType: this.getHandlingUnitType(item),
+        HazMat: item.hazmat ? 'X' : ''
       };
+
+      // Add NMFC if provided
+      if (item.nmfc) {
+        line.NMFC = String(item.nmfc);
+        if (item.nmfcSub) {
+          line.NMFCSub = String(item.nmfcSub);
+        }
+      }
+
+      // Add dimensions if provided and over 96 inches
+      if (item.length || item.height || item.width) {
+        line.CubeU = 'IN';
+        if (item.length) line.Length = String(Math.ceil(item.length));
+        if (item.height) line.Height = String(Math.ceil(item.height));
+        if (item.width) line.Width = String(Math.ceil(item.width));
+      }
+
+      return line;
     });
   }
 
-  buildHazmat(item) {
-    if (!item.hazmat) {
-      return { isHazmat: false };
-    }
-
-    return {
-      isHazmat: true,
-      unNumber: item.unNumber || undefined,
-      hazmatClass: item.hazmatClass || undefined,
-      packingGroup: item.packingGroup || undefined
-    };
-  }
-
-  mapAccessorials(accessorials) {
-    const mapped = [];
+  buildAccessorialCodes(accessorials) {
+    const codes = [];
     
-    // Map common accessorials to AAA Cooper codes
-    // These codes should match AAA Cooper's API documentation
-    const mappings = {
-      liftgatePickup: 'LiftgatePickup',
-      liftgateDelivery: 'LiftgateDelivery',
-      residentialPickup: 'ResidentialPickup',
-      residentialDelivery: 'ResidentialDelivery',
-      insideDelivery: 'InsideDelivery',
-      insidePickup: 'InsidePickup',
-      limitedAccessPickup: 'LimitedAccessPickup',
-      limitedAccessDelivery: 'LimitedAccessDelivery',
-      appointmentPickup: 'AppointmentPickup',
-      appointmentDelivery: 'AppointmentDelivery',
-      protectFromFreeze: 'ProtectFromFreeze'
-    };
-
+    // Check for pallet pricing if all commodities are pallets
+    // This would need business logic to determine when to use PALET
+    
+    // Map standard accessorials
     Object.keys(accessorials).forEach(key => {
-      if (accessorials[key] && mappings[key]) {
-        mapped.push(mappings[key]);
+      if (accessorials[key] && this.accessorialMappings[key]) {
+        codes.push({ AccCode: this.accessorialMappings[key] });
       }
     });
 
-    return mapped;
+    // Add excess length if any commodity is >= 96 inches (8 feet)
+    if (accessorials.commodities?.some(c => c.length >= 96)) {
+      codes.push({ AccCode: 'EXL' });
+    }
+
+    return codes;
   }
 
-  parseResponse(data) {
-    // Handle error response
-    if (data.status === 'ERROR' || data.error) {
-      throw new Error(data.message || data.error || 'AAA Cooper quote failed');
+  getHandlingUnitType(item) {
+    const unitType = (item.unitType || '').toLowerCase();
+    
+    const unitMappings = {
+      'pallet': 'Pallets',
+      'pallets': 'Pallets',
+      'carton': 'Cartons',
+      'cartons': 'Cartons',
+      'drum': 'Drums',
+      'drums': 'Drums',
+      'roll': 'Rolls',
+      'rolls': 'Rolls',
+      'bundle': 'Bundles',
+      'bundles': 'Bundles',
+      'box': 'Cartons',
+      'boxes': 'Cartons',
+      'crate': 'Other',
+      'crates': 'Other'
+    };
+
+    return unitMappings[unitType] || 'Other';
+  }
+
+  calculateTotalPallets(commodities) {
+    const palletCount = commodities
+      .filter(c => this.getHandlingUnitType(c) === 'Pallets')
+      .reduce((sum, c) => sum + (c.quantity || 1), 0);
+    
+    return palletCount > 0 ? String(palletCount) : '';
+  }
+
+  parseSoapResponse(response) {
+    // The response is wrapped in RateEstimateResponseVO
+    const data = response.RateEstimateResponseVO || response;
+    
+    // Check for errors
+    if (data.ErrorMessage) {
+      throw new Error(`AAA Cooper error: ${data.ErrorMessage}`);
     }
 
-    // Extract pricing components
-    const charges = data.charges || {};
-    const baseFreight = parseFloat(charges.base || 0);
-    const fuelSurcharge = parseFloat(charges.fuelSurcharge || 0);
-    
-    // Calculate accessorials total
-    let accessorialTotal = 0;
-    if (charges.accessorials && Array.isArray(charges.accessorials)) {
-      accessorialTotal = charges.accessorials.reduce((sum, acc) => {
-        return sum + parseFloat(acc.amount || 0);
-      }, 0);
+    // Check if the response was rated successfully
+    if (data.InformationCode !== 'RATED') {
+      console.warn('⚠️ AAA Cooper quote not rated:', data.InformationMessage);
+      if (!data.TotalCharges) {
+        return null;
+      }
     }
-    
-    // Use API's total or calculate
-    const totalCost = parseFloat(charges.total || (baseFreight + fuelSurcharge + accessorialTotal));
-    
-    // Extract transit information
-    const transitDays = parseInt(data.transitDays) || 3;
-    const pickupDate = data.pickupEarliest || null;
-    const deliveryDate = data.deliveryEstimate || null;
+
+    // Parse the response lines to get charge breakdown
+    const responseLines = data.RateEstimateResponseLine || [];
+    let baseFreight = 0;
+    let fuelSurcharge = 0;
+    let accessorialTotal = 0;
+
+    responseLines.forEach(line => {
+      const charges = parseFloat(line.Charges || 0);
+      const accessorialCode = line.Accessorial || '';
+      
+      if (accessorialCode === 'M') {
+        // Minimum charge (base freight)
+        baseFreight = charges;
+      } else if (accessorialCode === 'FSC') {
+        // Fuel surcharge
+        fuelSurcharge = charges;
+      } else if (accessorialCode && accessorialCode !== 'M' && accessorialCode !== 'FSC') {
+        // Other accessorials
+        accessorialTotal += charges;
+      }
+    });
+
+    // If no breakdown, use total charges as base freight
+    if (baseFreight === 0 && fuelSurcharge === 0) {
+      baseFreight = parseFloat(data.TotalCharges || 0);
+    }
+
+    const totalCost = parseFloat(data.TotalCharges || 0);
+    const transitDays = parseInt(data.TotalTransit) || 3;
     
     console.log('💰 AAA Cooper Pricing:');
+    console.log(`   Estimate #: ${data.EstimateNumber}`);
     console.log(`   Base Freight: $${baseFreight.toFixed(2)}`);
-    console.log(`   Fuel Surcharge: $${fuelSurcharge.toFixed(2)}`);
+    console.log(`   Fuel Surcharge: $${fuelSurcharge.toFixed(2)} (${data.FuelSurchargePercent}%)`);
     console.log(`   Accessorials: $${accessorialTotal.toFixed(2)}`);
     console.log(`   Total: $${totalCost.toFixed(2)}`);
     console.log(`   Transit: ${transitDays} days`);
+    console.log(`   Origin Terminal: ${data.OriginTerminal} (${data.OriginTerminalPhone})`);
+    console.log(`   Dest Terminal: ${data.DestinTerminal} (${data.DestinTerminalPhone})`);
 
     // Return in standardized format
     return this.formatStandardResponse({
-      service: data.service || 'LTL Standard',
+      service: 'LTL Standard',
       baseFreight: baseFreight,
       fuelSurcharge: fuelSurcharge,
       accessorialCharges: accessorialTotal,
       totalCost: totalCost,
       transitDays: transitDays,
       guaranteed: false,
-      quoteId: data.quoteId || `AAACT-${Date.now()}`,
-      validUntil: data.validUntil || new Date(Date.now() + 24 * 60 * 60 * 1000),
-      pickupDate: pickupDate,
-      deliveryDate: deliveryDate,
-      notes: data.notes || []
+      quoteId: data.EstimateNumber || `AAACT-${Date.now()}`,
+      validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      
+      // Additional AAA Cooper specific data
+      estimateNumber: data.EstimateNumber,
+      originTerminal: data.OriginTerminal,
+      originTerminalPhone: data.OriginTerminalPhone,
+      destinationTerminal: data.DestinTerminal,
+      destinationTerminalPhone: data.DestinTerminalPhone,
+      fuelSurchargePercent: data.FuelSurchargePercent,
+      density: data.Density,
+      discount: data.Discount,
+      minimumCharge: data.MinimumCharge,
+      tariff: data.Tariff
     });
   }
 
-  // Helper to map NMFC to class (you can expand this mapping)
-  getClassFromNMFC(nmfc) {
-    const nmfcMappings = {
-      '100240': 85,
-      '100110': 70,
-      '100130': 65,
-      // Add more NMFC to class mappings as needed
-    };
-    
-    return nmfcMappings[nmfc] || 85; // Default to class 85
-  }
-
-  // Optional: Get transit time separately if AAA Cooper provides this endpoint
-  async getTransitTime(origin, destination) {
+  // Test method to validate the connection
+  async testConnection() {
     try {
-      const response = await this.http.post('/transit-time', {
-        originZip: origin,
-        destinationZip: destination
-      });
+      console.log('🧪 Testing AAA Cooper SOAP connection...');
       
-      return response.data.transitDays || 3;
-    } catch (error) {
-      console.warn('Could not fetch transit time:', error.message);
-      return 3; // Default transit time
-    }
-  }
-
-  // Optional: Validate account credentials
-  async validateAccount() {
-    try {
-      // Make a simple test request to validate the token
-      const testRequest = this.buildRequest({
-        origin: { zipCode: '30301', city: 'Atlanta', state: 'GA' },
-        destination: { zipCode: '10001', city: 'New York', state: 'NY' },
-        pickupDate: new Date(),
-        commodities: [{
-          quantity: 1,
-          weight: 100,
-          length: 48,
-          width: 40,
-          height: 40,
-          description: 'Test validation'
+      await this.initializeSoapClient();
+      
+      // Create a simple test request
+      const testRequest = {
+        Token: this.apiToken,
+        CustomerNumber: this.customerNumber,
+        OriginCity: 'Dothan',
+        OriginState: 'AL',
+        OriginZip: '36303',
+        OriginCountryCode: 'USA',
+        DestinationCity: 'Atlanta',
+        DestinationState: 'GA',
+        DestinationZip: '30303',
+        DestinCountryCode: 'USA',
+        WhoAmI: 'S',
+        BillDate: '01152025',
+        PrePaidCollect: 'P',
+        AccLine: [],
+        RateEstimateRequestLine: [{
+          Weight: '100',
+          Class: '50',
+          HandlingUnits: '1',
+          HandlingUnitType: 'Pallets',
+          HazMat: ''
         }]
-      });
+      };
 
-      const response = await this.http.post('/rate-estimate', testRequest);
+      const [result] = await this.soapClient.wsGenRateEstimateAsync(testRequest);
       
-      if (response.data && response.data.status !== 'ERROR') {
-        console.log('✅ AAA Cooper account validated successfully');
+      if (result.RateEstimateResponseVO) {
+        console.log('✅ AAA Cooper SOAP connection successful');
+        console.log(`   Estimate Number: ${result.RateEstimateResponseVO.EstimateNumber}`);
         return true;
       }
       
       return false;
     } catch (error) {
-      console.error('❌ AAA Cooper account validation failed:', error.message);
+      console.error('❌ AAA Cooper connection test failed:', error.message);
       return false;
     }
   }
