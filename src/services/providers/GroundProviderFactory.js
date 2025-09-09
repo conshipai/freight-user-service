@@ -1,6 +1,7 @@
 // src/services/providers/GroundProviderFactory.js
 const STGProvider = require('./ground/STGProvider');
 const SEFLProvider = require('./ground/SEFLProvider');
+const AAACooperProvider = require('./ground/AAACooperProvider'); // NEW
 const CarrierAccount = require('../../models/CarrierAccount');
 
 class GroundProviderFactory {
@@ -9,6 +10,7 @@ class GroundProviderFactory {
     this.providerClasses = {
       'STG': STGProvider,
       'SEFL': SEFLProvider,
+      'AAA_COOPER': AAACooperProvider, // NEW
       // Add more as you create them:
       // 'FEDEX_FREIGHT': FedExFreightProvider,
       // 'OLD_DOMINION': OldDominionProvider,
@@ -23,7 +25,7 @@ class GroundProviderFactory {
     // Control which providers are active for company accounts
     this.activeProviders = process.env.ACTIVE_GROUND_CARRIERS 
       ? process.env.ACTIVE_GROUND_CARRIERS.split(',')
-      : ['STG', 'SEFL'];
+      : ['STG', 'SEFL', 'AAA_COOPER']; // Added AAA_COOPER to defaults
   }
 
   // Get a specific provider instance
@@ -41,6 +43,7 @@ class GroundProviderFactory {
     // Map carrier account codes to provider codes
     const carrierToProvider = {
       'SEFL': 'SEFL',
+      'AAA_COOPER': 'AAA_COOPER', // NEW
       'FEDEX_FREIGHT': 'FEDEX_FREIGHT',
       'OLD_DOMINION': 'OLD_DOMINION',
       'XPO': 'XPO',
@@ -76,6 +79,12 @@ class GroundProviderFactory {
       provider.credentials = creds;
       provider.isCustomerAccount = true;
       provider.accountId = accountData._id;
+      
+      // For AAA Cooper, override the token if customer has their own
+      if (carrierCode === 'AAA_COOPER' && creds.apiKey) {
+        provider.apiToken = creds.apiKey;
+        provider.http.defaults.headers['Authorization'] = `Bearer ${creds.apiKey}`;
+      }
     }
     
     return provider;
