@@ -1,5 +1,5 @@
 // src/services/providers/ground/AAACooperProvider.js
-const BaseGroundProvider = require('./BaseGroundProvider');
+const BaseGroundProvider = require('./ground/BaseGroundProvider');
 const soap = require('soap');
 
 class AAACooperProvider extends BaseGroundProvider {
