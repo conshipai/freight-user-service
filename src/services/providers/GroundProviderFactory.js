@@ -25,7 +25,7 @@ class GroundProviderFactory {
     // Control which providers are active for company accounts
     this.activeProviders = process.env.ACTIVE_GROUND_CARRIERS 
       ? process.env.ACTIVE_GROUND_CARRIERS.split(',')
-      : ['STG', 'SEFL''AAA_COOPER'];
+      : ['STG', 'SEFL','AAA_COOPER'];
   }
 
   // Get a specific provider instance
