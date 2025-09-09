@@ -2,7 +2,7 @@
 const STGProvider = require('./ground/STGProvider');
 const SEFLProvider = require('./ground/SEFLProvider');
 const CarrierAccount = require('../../models/CarrierAccount');
-const AAACooperProvider = require('./ground/AAACooperProvider');
+const AAACooperProvider = require('./AAACooperProvider');
 
 class GroundProviderFactory {
   constructor() {
