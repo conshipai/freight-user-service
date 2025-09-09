@@ -63,7 +63,23 @@ const groundCostSchema = new mongoose.Schema({
     totalCost: { type: Number, required: true }, // Final raw cost
     currency: { type: String, default: 'USD' }
   },
+
+  // NEW: Carrier submission tracking
+  submissionSource: {
+    type: String,
+    enum: ['api', 'magic_link', 'manual_entry', 'phone'],
+    default: 'api'
+  },
   
+  submittedBy: {
+    carrierId: String,
+    carrierName: String,
+    carrierEmail: String,
+    magicToken: String,     // Link back to invitation
+    employeeId: mongoose.Schema.Types.ObjectId, // If manual entry
+    employeeName: String
+  },
+
   // Transit Information
   transit: {
     days: Number,
@@ -91,6 +107,36 @@ const groundCostSchema = new mongoose.Schema({
     type: String, // '53_van', 'flatbed', etc.
     quantity: Number,
     requirements: [String] // ['air_ride', 'team_drivers', 'pads', 'straps']
+  },
+
+  // NEW: FTL/Expedited specific fields
+  carrierQuoteDetails: {
+    // Pricing breakdown (all optional - carrier can enter just total)
+    linehaul: Number,
+    fuelSurcharge: Number,
+    fuelPercentage: Number,
+    
+    // Individual accessorials
+    detention: Number,
+    layover: Number,
+    tarp: Number,
+    teamDriver: Number,
+    
+    // Or just lump sum
+    totalAccessorials: Number,
+    
+    // Free time
+    freeTimeLoadingHours: { type: Number, default: 2 },
+    freeTimeUnloadingHours: { type: Number, default: 2 },
+    detentionRatePerHour: Number,
+    
+    // Equipment confirmation
+    equipmentType: String,
+    equipmentNotes: String,
+    
+    // Other
+    specialConditions: String,
+    internalNotes: String  // Not shown to customer
   },
   
   // Status
