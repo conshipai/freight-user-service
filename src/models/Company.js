@@ -35,7 +35,7 @@ const companySchema = new mongoose.Schema({
           // API Providers
           'FreightForce', 'Pelicargo', 'ECULines',
           // Ground Carriers  
-          'STG', 'SEFL','AAA_COOPER', 'FEDEX_FREIGHT', 'OLD_DOMINION',
+          'STG', 'SEFL', 'FEDEX_FREIGHT', 'OLD_DOMINION',
           'XPO', 'ESTES', 'RL_CARRIERS', 'TFORCE',
           'SAIA', 'ABF', 'AVERITT',
           // Parcel
