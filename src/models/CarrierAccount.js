@@ -53,6 +53,7 @@ const carrierAccountSchema = new mongoose.Schema({
       'ABF',
       'SEFL',
       'AVERITT',
+      'AAA_COOPER',
       // Parcel carriers
       'FEDEX_EXPRESS',
       'UPS',
