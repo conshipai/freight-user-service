@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const ProviderFactory = require('../services/providers/ProviderFactory');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 // Test single provider
 router.post('/provider/:code', authorize(['system_admin']), async (req, res) => {
