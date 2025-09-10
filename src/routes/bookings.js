@@ -6,7 +6,6 @@ const Booking = require('../models/Booking');
 
 // ⬇️ ADDED: auth/authorize for protected endpoints
 const auth = require('../middleware/auth');
-const authorize = require('../middleware/authorize');
 
 /**
  * Create a new booking (existing lightweight creator)
