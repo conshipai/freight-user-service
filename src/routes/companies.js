@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const Company = require('../models/Company');
 const User = require('../models/User');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 // Create company with markup configuration
 router.post('/create', authorize(['system_admin']), async (req, res) => {
