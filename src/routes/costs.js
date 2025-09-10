@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const Request = require('../models/Request');
 const Cost = require('../models/Cost');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 // Add the function HERE - after imports, before routes
 async function processQuoteRequest(requestId) {
