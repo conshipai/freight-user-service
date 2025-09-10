@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Partner = require('../models/Partner');
-const { authorize } = require('../middleware/authorize');
+const authorize  = require('../middleware/authorize');
 
 // Define permissions here since config file doesn't exist
 const PERMISSION_HIERARCHY = {
