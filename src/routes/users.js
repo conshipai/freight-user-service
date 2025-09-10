@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Partner = require('../models/Partner');
+const auth = require('../middleware/auth');
 const authorize  = require('../middleware/authorize');
 
 // Define permissions here since config file doesn't exist
@@ -34,27 +35,15 @@ const PERMISSION_HIERARCHY = {
 };
 
 // ─────────────────────────────────────────────────────────────
-// Get current user (no password)  ✅ FIXED
+// Get current user (auth only)  ✅
 // ─────────────────────────────────────────────────────────────
-router.get('/me', authorize(), async (req, res) => {
+router.get('/me', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
       .select('-password')
       .populate('partnerId');
 
-    console.log('User found:', !!user);
-    console.log('Partner populated?', user?.partnerId?._id ? 'Yes' : 'No');
-    console.log('Partner data:', user?.partnerId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    // Debug details (safe)
-    console.log('User active field:', user.active);
-    console.log('User active type:', typeof user.active);
-    console.log('User status field:', user.status);
-    // If needed:
-    // console.log('Full user object:', JSON.stringify(user.toObject(), null, 2));
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     res.json({ success: true, user });
   } catch (error) {
@@ -64,38 +53,35 @@ router.get('/me', authorize(), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Create user with partner management (UPDATED)
+// Create user with partner management (auth + authorize) ✅
 // ─────────────────────────────────────────────────────────────
-router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
+router.post('/', auth, authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { email, password, name, role, company: companyName } = req.body;
     const requestingUser = req.user;
 
-    // Check if requesting user can create this role
     const canCreate = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(role);
     if (!canCreate && requestingUser.role !== 'system_admin') {
       return res.status(403).json({ error: 'Not authorized to create this user type' });
     }
 
-    // Handle partner assignment (UPDATED)
-    let partnerId = requestingUser.partnerId; // Default to requester's partner
+    // Partner assignment
+    let partnerId = requestingUser.partnerId;
 
     if (requestingUser.role === 'system_admin' && companyName) {
-      // Admin can create/assign partners
-      let partner = await Partner.findOne({ companyName: companyName });
+      let partner = await Partner.findOne({ companyName });
       if (!partner) {
-        // Create new partner if doesn't exist
-        const partnerType = ['partner_admin', 'partner_user'].includes(role) ? 'customer' :
-                            ['vendor_admin', 'vendor_user'].includes(role) ? 'vendor' :
-                            'foreign_partner';
+        const partnerType =
+          ['partner_admin', 'partner_user'].includes(role) ? 'customer' :
+          ['vendor_admin', 'vendor_user'].includes(role) ? 'vendor' : 'foreign_partner';
 
         partner = await Partner.create({
-          companyName: companyName,
+          companyName,
           companyCode: companyName.substring(0, 4).toUpperCase(),
           type: partnerType,
-          country: 'USA', // TODO: make dynamic as needed
+          country: 'USA',
           phone: 'pending',
-          email: email,
+          email,
           status: 'approved'
         });
       }
@@ -109,7 +95,6 @@ router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin',
       role,
       partnerId,
       parentAccountId: role.includes('_user') ? requestingUser._id : null,
-      // If your schema still uses 'modules', you can set defaults here from PERMISSION_HIERARCHY.
       modules: PERMISSION_HIERARCHY[role]?.defaultModules || [],
       active: true
     });
@@ -117,7 +102,6 @@ router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin',
     await user.save();
     await user.populate('partnerId');
 
-    // Update partner's primary contact if this is an admin (UPDATED)
     if (role === 'partner_admin' && partnerId) {
       await Partner.findByIdAndUpdate(partnerId, { primaryContactId: user._id });
     }
@@ -133,9 +117,9 @@ router.post('/', authorize(['system_admin', 'conship_employee', 'partner_admin',
 });
 
 // ─────────────────────────────────────────────────────────────
-// Get managed users with partner filtering (UPDATED)
+// Get managed users (auth only; logic limits by role) ✅
 // ─────────────────────────────────────────────────────────────
-router.get('/managed', authorize(), async (req, res) => {
+router.get('/managed', auth, async (req, res) => {
   try {
     const requestingUser = req.user;
     const canManageRoles = PERMISSION_HIERARCHY[requestingUser.role]?.canManage || [];
@@ -147,7 +131,6 @@ router.get('/managed', authorize(), async (req, res) => {
       ]
     };
 
-    // If not admin, only see users from same partner (UPDATED)
     if (requestingUser.role !== 'system_admin' && requestingUser.partnerId) {
       query.partnerId = requestingUser.partnerId;
     }
@@ -164,29 +147,24 @@ router.get('/managed', authorize(), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Update user modules
+// Update user modules (auth + authorize) ✅
 // ─────────────────────────────────────────────────────────────
-router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
+router.put('/:userId/modules', auth, authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
     const { modules } = req.body;
     const requestingUser = req.user;
 
     const targetUser = await User.findById(userId);
-    if (!targetUser) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
 
-    // Check permission to modify this user
-    const canManage = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(targetUser.role) ||
-                      targetUser.parentAccountId?.toString() === requestingUser._id.toString() ||
-                      requestingUser.role === 'system_admin';
+    const canManage =
+      PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(targetUser.role) ||
+      targetUser.parentAccountId?.toString() === requestingUser._id.toString() ||
+      requestingUser.role === 'system_admin';
 
-    if (!canManage) {
-      return res.status(403).json({ error: 'Not authorized to modify this user' });
-    }
+    if (!canManage) return res.status(403).json({ error: 'Not authorized to modify this user' });
 
-    // If your User schema doesn’t include `modules` anymore, map this to permissions instead
     targetUser.modules = (modules || []).map(moduleId => ({
       moduleId,
       name: getModuleName(moduleId),
@@ -204,17 +182,15 @@ router.put('/:userId/modules', authorize(['system_admin', 'conship_employee', 'p
 });
 
 // ─────────────────────────────────────────────────────────────
-// Suspend/Activate user (uses same-Partner check)
+// Suspend/Activate user (auth + authorize) ✅
 // ─────────────────────────────────────────────────────────────
-router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
+router.put('/:userId/status', auth, authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
     const { active } = req.body;
 
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
     const requestingUser = req.user;
 
@@ -226,11 +202,9 @@ router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'pa
         ['partner_admin', 'vendor_admin'].includes(requestingUser.role)
       );
 
-    if (!canManage) {
-      return res.status(403).json({ error: 'Not authorized to change this user status' });
-    }
+    if (!canManage) return res.status(403).json({ error: 'Not authorized to change this user status' });
 
-    user.active = active; // if you switched to `status`, set user.status = active ? 'active' : 'suspended';
+    user.active = active;
     await user.save();
 
     res.json({
@@ -245,18 +219,15 @@ router.put('/:userId/status', authorize(['system_admin', 'conship_employee', 'pa
 });
 
 // ─────────────────────────────────────────────────────────────
-// Delete user (system admin only)
+// Delete user (auth + authorize system_admin) ✅
 // ─────────────────────────────────────────────────────────────
-router.delete('/:userId', authorize(['system_admin']), async (req, res) => {
+router.delete('/:userId', auth, authorize(['system_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
 
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Only allow deleting inactive users
     if (user.active) {
       return res.status(400).json({ error: 'Cannot delete active user. Suspend first.' });
     }
