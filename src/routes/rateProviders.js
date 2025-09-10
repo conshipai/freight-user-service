@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const RateProvider = require('../models/RateProvider');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 // ─────────────────────────────────────────────────────────────
 // RATE PROVIDER MANAGEMENT (Admin Only)
