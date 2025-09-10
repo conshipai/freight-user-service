@@ -28,4 +28,4 @@ const authorize = (allowedRoles = []) => {
   };
 };
 
-module.exports = { authorize };
+module.exports = authorize;
