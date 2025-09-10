@@ -3,7 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const Partner = require('../models/Partner'); // Adjust path as needed
 const User = require('../models/User'); // Adjust path as needed
-const { authorize } = require('../middleware/authorize'); // ✅ Fixed path
+const authorize = require('../middleware/authorize'); // ✅ Fixed path
 
 // Create partner directly (with automatic user account creation)
 router.post('/create-direct', authorize(['system_admin']), async (req, res) => {
