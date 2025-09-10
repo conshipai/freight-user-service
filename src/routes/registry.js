@@ -1,7 +1,7 @@
 // src/routes/registry.js
 const express = require('express');
 const router = express.Router();
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 router.get('/', authorize(), async (req, res) => {
   const apps = [
