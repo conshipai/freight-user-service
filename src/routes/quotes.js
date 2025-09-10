@@ -6,7 +6,7 @@ const Cost = require('../models/Cost');
 const Quote = require('../models/Quote');
 const RateProvider = require('../models/RateProvider');
 const ProviderFactory = require('../services/providers/ProviderFactory');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 const Booking = require('../models/Booking'); // ADDED
 
 // ✅ NEW MODELS for ground integration
