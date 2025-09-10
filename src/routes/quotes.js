@@ -83,15 +83,21 @@ router.get('/recent', authorize(), async (req, res) => {
     const limitNum = parseInt(limit, 10);
 
     const query = {};
-    if (req.user.role !== 'system_admin') {
-      query.userId = req.user._id;
+    // Fix: Use consistent userId reference
+    const userId = req.user?._id || req.userId;
+    
+    if (req.user?.role !== 'system_admin' && userId) {
+      query.userId = userId;
     }
+
+    console.log('Fetching quotes for user:', userId, 'Query:', query); // Debug log
 
     const [airQuotes, groundQuotes] = await Promise.all([
       Request.find(query).sort('-createdAt').limit(limitNum).lean(),
       GroundRequest.find(query).sort('-createdAt').limit(limitNum).lean()
     ]);
 
+    console.log(`Found ${airQuotes.length} air quotes and ${groundQuotes.length} ground quotes`); // Debug log
     const allQuotes = [];
 
     for (const quote of airQuotes) {
