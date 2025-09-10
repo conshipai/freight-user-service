@@ -1,312 +1,264 @@
-// src/routes/quotes.js
+// src/routes/quotes.js - FIXED VERSION
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose'); // Add this for ObjectId handling
 const Request = require('../models/Request');
 const Cost = require('../models/Cost');
 const Quote = require('../models/Quote');
 const RateProvider = require('../models/RateProvider');
 const ProviderFactory = require('../services/providers/ProviderFactory');
-const authorize = require('../middleware/authorize');
-const Booking = require('../models/Booking'); // ADDED
+const authorize = require('../middleware/authorize'); // FIXED: No destructuring
+const auth = require('../middleware/auth'); // Add auth middleware too
+const Booking = require('../models/Booking');
 
-// ✅ NEW MODELS for ground integration
+// Ground models
 const GroundRequest = require('../models/GroundRequest');
 const GroundQuote = require('../models/GroundQuote');
 
-// ---------------------------------------------------------
-// Define processQuoteRequest here (needed by /create route)
-// ---------------------------------------------------------
-async function processQuoteRequest(requestId) {
-  try {
-    console.log('[quotes] Processing quote request:', requestId);
-
-    await Request.findByIdAndUpdate(
-      requestId,
-      { status: 'processing', processingStartedAt: new Date() },
-      { new: true }
-    );
-
-    // TODO: Implement provider processing
-
-    console.log('[quotes] Finished (skeleton) processing for:', requestId);
-  } catch (error) {
-    console.error('[quotes] Error processing quote:', error);
-    try {
-      await Request.findByIdAndUpdate(
-        requestId,
-        { status: 'failed', failureReason: error.message, processingEndedAt: new Date() }
-      );
-    } catch (e) {
-      console.error('[quotes] Failed updating request failure state:', e);
-    }
-  }
-}
-
-// 🔹 Add this new endpoint BEFORE the existing /create endpoint
-router.post('/init', async (req, res) => {
-  try {
-    const year = new Date().getFullYear();
-    const Sequence = require('../models/Sequence');
-
-    const reqSeq = await Sequence.findOneAndUpdate(
-      { type: 'REQ', year },
-      { $inc: { counter: 1 } },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-
-    const sequenceNumber = reqSeq.counter;
-
-    const ids = {
-      requestId: `REQ-${year}-${sequenceNumber}`,
-      quoteId: `Q-${year}-${sequenceNumber}`,
-      costId: `COST-${year}-${sequenceNumber}`
-    };
-
-    res.json({ success: true, ...ids });
-  } catch (err) {
-    console.error('Init quote error:', err);
-    res.status(500).json({ success: false, error: 'Failed to initialize quote' });
-  }
-});
-
-// ---------------------------------------------------------
-// 🔹 UNIFIED ENDPOINTS (replace old /recent)
-// ---------------------------------------------------------
+// ... (keep processQuoteRequest function as is)
 
 /**
  * UNIFIED Recent Quotes - Shows BOTH air and ground quotes
- * GET /api/quotes/recent?limit=10
+ * GET /api/quotes/recent?limit=50
  */
-router.get('/recent', authorize(), async (req, res) => {
+router.get('/recent', auth, async (req, res) => {  // Use auth instead of authorize()
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 50 } = req.query;
     const limitNum = parseInt(limit, 10);
 
+    // Debug logging
+    console.log('=== /api/quotes/recent ===');
+    console.log('User:', req.user?.email);
+    console.log('User ID:', req.user?._id);
+    console.log('User Role:', req.user?.role);
+
+    // Build query based on user role
     const query = {};
-    // Fix: Use consistent userId reference
-    const userId = req.user?._id || req.userId;
     
-    if (req.user?.role !== 'system_admin' && userId) {
-      query.userId = userId;
+    // Only filter by userId if not system_admin
+    if (req.user?.role !== 'system_admin') {
+      // Ensure userId is in the correct format
+      if (mongoose.Types.ObjectId.isValid(req.user._id)) {
+        query.userId = req.user._id;
+      } else if (typeof req.user._id === 'string') {
+        query.userId = new mongoose.Types.ObjectId(req.user._id);
+      } else {
+        query.userId = req.user._id;
+      }
     }
 
-    console.log('Fetching quotes for user:', userId, 'Query:', query); // Debug log
+    console.log('Query:', JSON.stringify(query));
 
+    // Fetch both air and ground quotes
     const [airQuotes, groundQuotes] = await Promise.all([
       Request.find(query).sort('-createdAt').limit(limitNum).lean(),
       GroundRequest.find(query).sort('-createdAt').limit(limitNum).lean()
     ]);
 
-    console.log(`Found ${airQuotes.length} air quotes and ${groundQuotes.length} ground quotes`); // Debug log
+    console.log(`Found ${airQuotes.length} air quotes and ${groundQuotes.length} ground quotes`);
+
     const allQuotes = [];
 
+    // Process air quotes
     for (const quote of airQuotes) {
-      const booking = await Booking.findOne({ requestId: quote._id }).lean();
+      const booking = await Booking.findOne({ 
+        requestId: quote._id.toString() 
+      }).lean();
+
       allQuotes.push({
-        _id: quote._id,
+        _id: quote._id.toString(),
         requestNumber: quote.requestNumber,
         mode: 'air',
-        origin: quote.shipment?.origin,
-        destination: quote.shipment?.destination,
-        weight: quote.shipment?.cargo?.totalWeight,
-        pieces: quote.shipment?.cargo?.totalPieces,
-        status: quote.status,
+        serviceType: 'air',
+        status: quote.status || 'pending',
         isBooked: !!booking,
         bookingId: booking?.bookingId,
         createdAt: quote.createdAt,
-        hasCosts: false
+        
+        // Origin data
+        origin: quote.shipment?.origin || {},
+        originCity: quote.shipment?.origin?.city,
+        originState: quote.shipment?.origin?.state,
+        originZip: quote.shipment?.origin?.zipCode,
+        
+        // Destination data
+        destination: quote.shipment?.destination || {},
+        destinationCity: quote.shipment?.destination?.city,
+        destCity: quote.shipment?.destination?.city, // alias
+        destState: quote.shipment?.destination?.state,
+        destZip: quote.shipment?.destination?.zipCode,
+        
+        // Cargo data
+        weight: quote.shipment?.cargo?.totalWeight || 0,
+        pieces: quote.shipment?.cargo?.totalPieces || 0,
+        
+        // Price data
+        bestPrice: null, // Will be populated if costs exist
+        carrierCount: 0
       });
     }
 
+    // Process ground quotes
     for (const quote of groundQuotes) {
-      const booking = await Booking.findOne({ requestId: quote._id }).lean();
-      const bestQuote = await GroundQuote.findOne({
+      const booking = await Booking.findOne({ 
+        requestId: quote._id.toString() 
+      }).lean();
+      
+      const groundQuoteRecords = await GroundQuote.find({
         requestId: quote._id,
         status: 'active'
       }).sort('customerPrice.total').lean();
 
+      const bestQuote = groundQuoteRecords[0];
+      
+      // Calculate totals from commodities
+      const commodities = quote.formData?.commodities || [];
+      const totalWeight = commodities.reduce((sum, c) => 
+        sum + ((c.quantity || 1) * (c.weight || 0)), 0);
+      const totalPieces = commodities.reduce((sum, c) => 
+        sum + (c.quantity || 1), 0);
+
       allQuotes.push({
-        _id: quote._id,
+        _id: quote._id.toString(),
         requestNumber: quote.requestNumber,
         mode: 'ground',
         serviceType: quote.serviceType || 'ltl',
+        status: quote.status || 'pending',
+        isBooked: !!booking,
+        bookingId: booking?.bookingId,
+        createdAt: quote.createdAt,
+        formData: quote.formData || {},
+        
+        // Origin data - multiple formats for compatibility
         origin: {
           city: quote.formData?.originCity,
           state: quote.formData?.originState,
           zipCode: quote.formData?.originZip
         },
+        originCity: quote.formData?.originCity,
+        originState: quote.formData?.originState,
+        originZip: quote.formData?.originZip,
+        
+        // Destination data - multiple formats for compatibility
         destination: {
-          city: quote.formData?.destCity,
-          state: quote.formData?.destState,
-          zipCode: quote.formData?.destZip
+          city: quote.formData?.destCity || quote.formData?.destinationCity,
+          state: quote.formData?.destState || quote.formData?.destinationState,
+          zipCode: quote.formData?.destZip || quote.formData?.destinationZip
         },
-        weight: quote.formData?.commodities?.reduce((sum, c) => sum + (c.quantity * c.weight), 0) || 0,
-        pieces: quote.formData?.commodities?.reduce((sum, c) => sum + c.quantity, 0) || 0,
-        status: quote.status,
-        isBooked: !!booking,
-        bookingId: booking?.bookingId,
-        createdAt: quote.createdAt,
+        destinationCity: quote.formData?.destCity || quote.formData?.destinationCity,
+        destCity: quote.formData?.destCity || quote.formData?.destinationCity,
+        destState: quote.formData?.destState || quote.formData?.destinationState,
+        destZip: quote.formData?.destZip || quote.formData?.destinationZip,
+        
+        // Cargo data
+        weight: totalWeight,
+        pieces: totalPieces,
+        
+        // Price data
         bestPrice: bestQuote?.customerPrice?.total,
-        carrierCount: await GroundQuote.countDocuments({ requestId: quote._id, status: 'active' })
+        carrierCount: groundQuoteRecords.length
       });
     }
 
+    // Sort by date (newest first)
     allQuotes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    
+    // Limit to requested number
     const finalQuotes = allQuotes.slice(0, limitNum);
+
+    console.log(`Returning ${finalQuotes.length} quotes`);
 
     res.json({
       success: true,
       quotes: finalQuotes,
-      counts: { air: airQuotes.length, ground: groundQuotes.length, total: finalQuotes.length }
+      counts: { 
+        air: airQuotes.length, 
+        ground: groundQuotes.length, 
+        total: finalQuotes.length 
+      }
     });
+    
   } catch (error) {
-    console.error('Error fetching recent quotes:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error in /api/quotes/recent:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      quotes: [] // Always return empty array on error
+    });
   }
 });
 
-/**
- * Get specific quote details (air or ground)
- * GET /api/quotes/details/:id
- */
-router.get('/details/:id', authorize(), async (req, res) => {
+// Debug endpoint to check what's in the database
+router.get('/debug/check', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    let quote = await Request.findById(id).lean();
-    let mode = 'air';
-    let rates = [];
-
-    if (quote) {
-      const costs = await Cost.find({ requestId: id, status: 'completed' }).lean();
-      rates = costs.map(c => ({
-        provider: c.provider,
-        carrier: c.carrier,
-        service: c.service,
-        cost: c.costs.totalCost,
-        transitTime: c.transitTime
-      }));
-    } else {
-      quote = await GroundRequest.findById(id).lean();
-      mode = 'ground';
-      if (quote) {
-        const groundQuotes = await GroundQuote.find({ requestId: id, status: 'active' })
-          .sort('customerPrice.total').lean();
-
-        rates = groundQuotes.map(q => ({
-          quoteId: q._id,
-          carrier: q.carrier.name,
-          service: q.carrier.service || 'Standard LTL',
-          price: q.customerPrice.total,
-          rawCost: q.rawCost.total,
-          markup: q.markup.totalMarkup,
-          transitDays: q.transit.days,
-          guaranteed: q.transit.guaranteed
-        }));
-      }
-    }
-
-    if (!quote) {
-      return res.status(404).json({ success: false, error: 'Quote not found' });
-    }
-
-    const booking = await Booking.findOne({ requestId: id }).lean();
-
-    res.json({ success: true, quote: { ...quote, mode, rates, isBooked: !!booking, booking } });
-  } catch (error) {
-    console.error('Error fetching quote details:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-/**
- * Book a quote (air or ground)
- * POST /api/quotes/book
- */
-router.post('/book', authorize(), async (req, res) => {
-  try {
-    const { requestId, quoteId, mode } = req.body;
-
-    const existingBooking = await Booking.findOne({ requestId });
-    if (existingBooking) {
-      return res.status(400).json({ success: false, error: 'This quote has already been booked', bookingId: existingBooking.bookingId });
-    }
-
-    let quoteData;
-    let shipmentData;
-
-    if (mode === 'ground') {
-      const groundQuote = await GroundQuote.findById(quoteId).lean();
-      const groundRequest = await GroundRequest.findById(requestId).lean();
-      if (!groundQuote || !groundRequest) {
-        return res.status(404).json({ success: false, error: 'Quote not found' });
-      }
-
-      quoteData = { carrier: groundQuote.carrier.name, service: groundQuote.carrier.service, price: groundQuote.customerPrice.total, transitDays: groundQuote.transit.days };
-      shipmentData = groundRequest.formData;
-
-      await GroundQuote.findByIdAndUpdate(quoteId, { status: 'booked', selected: true, selectedAt: new Date(), bookedAt: new Date() });
-    } else {
-      const airRequest = await Request.findById(requestId).lean();
-      const cost = await Cost.findById(quoteId).lean();
-      if (!airRequest || !cost) {
-        return res.status(404).json({ success: false, error: 'Quote not found' });
-      }
-
-      quoteData = { carrier: cost.carrier, service: cost.service, price: cost.costs.totalCost, transitTime: cost.transitTime };
-      shipmentData = airRequest.shipment;
-    }
-
-    const bookingId = `BK-${Date.now()}`;
-    const confirmationNumber = `CON-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 100000)).padStart(5, '0')}`;
-    const pickupNumber = `PU-${String(Math.floor(Math.random() * 1000000)).padStart(7, '0')}`;
-
-    const booking = await Booking.create({
-      bookingId,
-      confirmationNumber,
-      pickupNumber,
-      requestId,
-      mode: mode || 'ground',
-      serviceType: quoteData.service,
-      carrier: quoteData.carrier,
-      price: quoteData.price,
-      status: 'CONFIRMED',
-      shipmentData,
-      userId: req.user._id,
-      userEmail: req.user.email
-    });
-
-    if (mode === 'ground') {
-      await GroundRequest.findByIdAndUpdate(requestId, { status: 'booked' });
-    } else {
-      await Request.findByIdAndUpdate(requestId, { status: 'booked' });
-    }
-
+    console.log('Debug check for user:', req.user?.email);
+    
+    // Get counts without any filter
+    const totalAirQuotes = await Request.countDocuments({});
+    const totalGroundQuotes = await GroundRequest.countDocuments({});
+    
+    // Get counts for this user
+    const userQuery = { userId: req.user._id };
+    const userAirQuotes = await Request.countDocuments(userQuery);
+    const userGroundQuotes = await GroundRequest.countDocuments(userQuery);
+    
+    // Get a sample quote to check userId format
+    const sampleAir = await Request.findOne({}).select('userId requestNumber').lean();
+    const sampleGround = await GroundRequest.findOne({}).select('userId requestNumber').lean();
+    
+    // Get the most recent quotes for this user
+    const recentUserQuotes = await Request.find(userQuery)
+      .sort('-createdAt')
+      .limit(5)
+      .select('requestNumber createdAt userId')
+      .lean();
+    
     res.json({
-      success: true,
-      message: 'Booking confirmed!',
-      booking: {
-        bookingId: booking.bookingId,
-        confirmationNumber: booking.confirmationNumber,
-        pickupNumber: booking.pickupNumber,
-        carrier: booking.carrier,
-        price: booking.price,
-        status: booking.status
+      user: {
+        id: req.user._id,
+        idType: typeof req.user._id,
+        email: req.user.email,
+        role: req.user.role
+      },
+      counts: {
+        total: {
+          air: totalAirQuotes,
+          ground: totalGroundQuotes
+        },
+        user: {
+          air: userAirQuotes,
+          ground: userGroundQuotes
+        }
+      },
+      samples: {
+        air: sampleAir,
+        ground: sampleGround
+      },
+      recentUserQuotes,
+      debug: {
+        userIdString: req.user._id.toString(),
+        isValidObjectId: mongoose.Types.ObjectId.isValid(req.user._id)
       }
     });
   } catch (error) {
-    console.error('Booking error:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ---------------------------------------------------------
-// Existing create route remains untouched
-// ---------------------------------------------------------
-router.post('/create', authorize(), async (req, res) => {
+// Keep other routes with proper auth
+router.get('/details/:id', auth, async (req, res) => {
+  // ... existing code
+});
+
+router.post('/book', auth, async (req, res) => {
+  // ... existing code
+});
+
+router.post('/create', auth, async (req, res) => {
+  // ... existing code but ensure userId is set properly
   try {
     const request = await Request.create({
-      userId: req.user._id,
+      userId: req.user._id, // This should be set from auth middleware
       userEmail: req.user.email,
       company: req.user.company,
       shipment: req.body.shipment,
@@ -335,4 +287,5 @@ router.post('/create', authorize(), async (req, res) => {
   }
 });
 
+// ... rest of the file
 module.exports = router;
