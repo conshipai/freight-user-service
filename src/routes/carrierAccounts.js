@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const CarrierAccount = require('../models/CarrierAccount');
-const { authorize } = require('../middleware/authorize');
+const authorize = require('../middleware/authorize');
 
 // Get all carrier accounts for current user/company
 router.get('/', authorize(), async (req, res) => {
