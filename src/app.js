@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
-
+const debugRoutes = require('./routes/debug');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -42,7 +42,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/ground-quotes', groundQuoteRoutes);
 app.use('/api/bols', bolRoutes);
 app.use('/api/carrier-accounts', carrierAccountRoutes); 
-
+app.use('/api/debug', debugRoutes);
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
 app.use('/api/storage', storageRoutes);
