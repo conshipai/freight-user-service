@@ -1,7 +1,11 @@
 // src/routes/debug.js
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+
+// Correct import - auth.js exports a default function
+const auth = require('../middleware/auth');
+
+// Import models
 const Request = require('../models/Request');
 const GroundRequest = require('../models/GroundRequest');
 const Cost = require('../models/Cost');
@@ -12,7 +16,7 @@ const Booking = require('../models/Booking');
 const Shipment = require('../models/Shipment');
 
 // Debug endpoint for ground quotes
-router.get('/ground-chain/:requestId', authenticate, async (req, res) => {
+router.get('/ground-chain/:requestId', auth, async (req, res) => {
   try {
     const { requestId } = req.params;
     
@@ -94,7 +98,7 @@ router.get('/ground-chain/:requestId', authenticate, async (req, res) => {
 });
 
 // Debug endpoint for air/ocean quotes
-router.get('/air-ocean-chain/:requestId', authenticate, async (req, res) => {
+router.get('/air-ocean-chain/:requestId', auth, async (req, res) => {
   try {
     const { requestId } = req.params;
     
@@ -173,7 +177,7 @@ router.get('/air-ocean-chain/:requestId', authenticate, async (req, res) => {
 });
 
 // Get all active quotes summary
-router.get('/all-quotes', authenticate, async (req, res) => {
+router.get('/all-quotes', auth, async (req, res) => {
   try {
     const { limit = 20 } = req.query;
     
@@ -228,7 +232,7 @@ router.get('/all-quotes', authenticate, async (req, res) => {
 });
 
 // Verify data consistency
-router.get('/verify/:requestId', authenticate, async (req, res) => {
+router.get('/verify/:requestId', auth, async (req, res) => {
   try {
     const { requestId } = req.params;
     const issues = [];
