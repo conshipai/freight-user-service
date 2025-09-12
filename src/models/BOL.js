@@ -1,98 +1,117 @@
-// src/models/BOL.js
+// ============================================
+// 4. src/models/BOL.js - UPDATED
+// ============================================
 const mongoose = require('mongoose');
 
 const bolSchema = new mongoose.Schema({
+  bookingId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Booking',
+    required: true,
+    index: true
+  },
+  requestId: {
+    type: String,
+    required: true,
+    index: true
+  },
   bolNumber: {
     type: String,
-    unique: true,
-    required: true
+    required: true,
+    unique: true
   },
-  
-  bookingId: {
+  fileUrl: {
     type: String,
     required: true
   },
-  
-  confirmationNumber: String,
-  pickupNumber: String,
-  carrier: String,
-  
-  // Parties
-  shipper: {
-    name: String,
-    address: String,
-    city: String,
-    state: String,
-    zip: String,
-    phone: String,
-    contact: String,
-    email: String
+  fileKey: {
+    type: String,
+    required: true
   },
-  
-  consignee: {
-    name: String,
-    address: String,
-    city: String,
-    state: String,
-    zip: String,
-    phone: String,
-    contact: String,
-    email: String
+  documentType: {
+    type: String,
+    default: 'bol'
   },
-  
-  thirdParty: {
-    name: String,
-    address: String,
-    city: String,
-    state: String,
-    zip: String,
-    phone: String
+  version: {
+    type: Number,
+    default: 1
   },
-  
-  // Line items
-  items: [{
-    quantity: Number,
-    unitType: String,
-    description: String,
-    weight: Number,
-    class: String,
-    nmfc: String,
-    hazmat: Boolean
-  }],
-  
-  // References
-  poNumber: String,
-  referenceNumbers: [String],
-  specialInstructions: String,
-  
-  // Dates
-  pickupDate: Date,
-  deliveryDate: Date,
-  
-  // PDF Storage
-  pdfUrl: String,
-  pdfKey: String, // S3/storage key
-  
-  // Status
   status: {
     type: String,
-    enum: ['draft', 'final', 'void'],
-    default: 'draft'
+    enum: ['draft', 'final', 'void', 'amended'],
+    default: 'final'
   },
-  
-  createdBy: mongoose.Schema.Types.ObjectId
-
+  metadata: {
+    shipper: {
+      name: String,
+      address: String,
+      city: String,
+      state: String,
+      zip: String,
+      contact: String,
+      phone: String
+    },
+    consignee: {
+      name: String,
+      address: String,
+      city: String,
+      state: String,
+      zip: String,
+      contact: String,
+      phone: String
+    },
+    carrier: {
+      name: String,
+      proNumber: String,
+      trailerNumber: String,
+      sealNumber: String
+    },
+    commodities: [{
+      quantity: Number,
+      unitType: String,
+      weight: Number,
+      class: String,
+      description: String,
+      nmfc: String,
+      hazmat: Boolean
+    }],
+    specialInstructions: String,
+    termsConditions: String
+  },
+  signedBy: {
+    shipper: {
+      name: String,
+      signedAt: Date,
+      signature: String // Base64 or URL to signature image
+    },
+    carrier: {
+      name: String,
+      signedAt: Date,
+      signature: String
+    },
+    consignee: {
+      name: String,
+      signedAt: Date,
+      signature: String,
+      notes: String
+    }
+  },
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  lastModifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }
 }, {
   timestamps: true
 });
 
-// Generate BOL number
-bolSchema.pre('save', async function(next) {
-  if (!this.bolNumber) {
-    const count = await mongoose.model('BOL').countDocuments();
-    this.bolNumber = `BOL-${Date.now()}-${String(count + 1).padStart(4, '0')}`;
-  }
-  next();
-});
+// Indexes
+bolSchema.index({ bookingId: 1 });
+bolSchema.index({ requestId: 1 });
+bolSchema.index({ bolNumber: 1 });
+bolSchema.index({ status: 1 });
 
 module.exports = mongoose.model('BOL', bolSchema);
