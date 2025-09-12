@@ -218,7 +218,58 @@ router.post('/change-password', async (req, res) => {
     res.status(500).json({ error: 'Error changing password' });
   }
 });
+// ─────────────────────────────────────────────────────────────
+// Refresh token endpoint
+// ─────────────────────────────────────────────────────────────
+router.post('/refresh', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
 
+    // Verify the current token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (error) {
+      // Even if expired, we can still decode it
+      decoded = jwt.decode(token);
+      if (!decoded) {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+    }
+
+    // Get fresh user data
+    const user = await User.findById(decoded.userId).select('-password');
+    if (!user || !user.active) {
+      return res.status(401).json({ error: 'User not found or inactive' });
+    }
+
+    // Generate new token with fresh expiry
+    const newToken = jwt.sign(
+      {
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        partnerId: user.partnerId || null
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('Token refreshed for:', user.email);
+
+    res.json({
+      success: true,
+      token: newToken,
+      user: user.toObject()
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({ error: 'Error refreshing token' });
+  }
+});
 // ─────────────────────────────────────────────────────────────
 // Logout endpoint
 // ─────────────────────────────────────────────────────────────
