@@ -46,6 +46,7 @@ app.use('/api/debug', debugRoutes);
 app.use('/api/address-book', require('./routes/addressBook'));
 app.use('/api/carriers', require('./routes/carriers'));
 app.use('/api/products', require('./routes/products'));
+app.use('/api/carrier-accounts', require('./routes/carrierAccounts'));
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
