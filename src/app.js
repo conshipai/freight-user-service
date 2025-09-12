@@ -40,9 +40,13 @@ app.use('/api/airports', airportRoutes);
 app.use('/api/apps/registry', registryRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/ground-quotes', groundQuoteRoutes);
-app.use('/api/bols', bolRoutes);
+app.use('/api/bols', require('./routes/bols'));
 app.use('/api/carrier-accounts', carrierAccountRoutes); 
 app.use('/api/debug', debugRoutes);
+app.use('/api/address-book', require('./routes/addressBook'));
+app.use('/api/carriers', require('./routes/carriers'));
+app.use('/api/products', require('./routes/products'));
+
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
 app.use('/api/storage', storageRoutes);
