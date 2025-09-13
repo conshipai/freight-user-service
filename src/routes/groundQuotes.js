@@ -1,4 +1,4 @@
-// src/routes/groundQuotes.js - COMPLETE VERSION
+// src/routes/groundQuotes.js - COMPLETE VERSION WITH FIXES
 const router = require('express').Router();
 const crypto = require('crypto');
 const GroundRequest = require('../models/GroundRequest');
@@ -128,6 +128,66 @@ router.post('/create', auth, async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
+    });
+  }
+});
+
+// Get recent ground quotes for the current user
+router.get('/recent', auth, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    // Get recent requests
+    const recentRequests = await GroundRequest.find({
+      userId: userId
+    })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .select('requestNumber serviceType status formData createdAt');
+    
+    // Get quotes for each request
+    const requestsWithQuotes = await Promise.all(
+      recentRequests.map(async (request) => {
+        const quotes = await GroundQuote.find({ 
+          requestId: request._id,
+          status: 'active'
+        })
+        .select('carrier customerPrice transit createdAt')
+        .sort('customerPrice.total')
+        .limit(5); // Get top 5 quotes per request
+        
+        return {
+          _id: request._id,
+          requestNumber: request.requestNumber,
+          serviceType: request.serviceType,
+          status: request.status,
+          origin: `${request.formData.originCity}, ${request.formData.originState}`,
+          destination: `${request.formData.destCity}, ${request.formData.destState}`,
+          createdAt: request.createdAt,
+          quoteCount: quotes.length,
+          bestPrice: quotes.length > 0 ? quotes[0].customerPrice.total : null,
+          quotes: quotes.map(q => ({
+            quoteId: q._id,
+            carrier: q.carrier.name,
+            price: q.customerPrice.total,
+            transitDays: q.transit.days
+          }))
+        };
+      })
+    );
+    
+    res.json({
+      success: true,
+      count: requestsWithQuotes.length,
+      requests: requestsWithQuotes
+    });
+    
+  } catch (error) {
+    console.error('Error fetching recent ground quotes:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch recent quotes'
     });
   }
 });
