@@ -165,8 +165,12 @@ router.get('/recent', auth, async (req, res) => {
           requestNumber: request.requestNumber,
           serviceType: request.serviceType,
           status: request.status,
-          origin: `${request.formData.originCity}, ${request.formData.originState}`,
-          destination: `${request.formData.destCity}, ${request.formData.destState}`,
+          origin: request.formData ? 
+            `${request.formData.originCity || 'Unknown'}, ${request.formData.originState || ''}` : 
+            'Unknown',
+          destination: request.formData ? 
+            `${request.formData.destCity || 'Unknown'}, ${request.formData.destState || ''}` : 
+            'Unknown',
           createdAt: request.createdAt,
           quoteCount: quotes.length,
           bestPrice: quotes.length > 0 ? quotes[0].customerPrice.total : null,
