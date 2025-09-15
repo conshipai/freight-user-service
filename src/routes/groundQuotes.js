@@ -34,11 +34,9 @@ router.post('/create', auth, async (req, res) => {
       // LTL - Process automatically
       res.json({
         success: true,
-        data: {
-          _id: groundRequest._id.toString(),
-          requestNumber: groundRequest.requestNumber,
-          status: 'processing'
-        }
+        requestId: groundRequest._id.toString(),
+        requestNumber: groundRequest.requestNumber,
+        status: 'processing'
       });
       
       // Process in background
@@ -114,13 +112,11 @@ router.post('/create', auth, async (req, res) => {
       
       res.json({
         success: true,
-        data: {
-          _id: groundRequest._id.toString(),
-          requestNumber: groundRequest.requestNumber,
-          status: 'pending_carrier_response',
-          carriersNotified: carriers.carriers.length,
-          responseDeadline: responseDeadline
-        }
+        requestId: groundRequest._id.toString(),
+        requestNumber: groundRequest.requestNumber,
+        status: 'pending_carrier_response',
+        carriersNotified: carriers.carriers.length,
+        responseDeadline: responseDeadline
       });
       
       console.log(`📧 Sent ${serviceType.toUpperCase()} quote request ${groundRequest.requestNumber} to ${carriers.carriers.length} carriers`);
