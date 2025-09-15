@@ -13,14 +13,18 @@ const emailService = require('../services/emailService');
 // Main create endpoint - handles all service types
 router.post('/create', auth, async (req, res) => {
   try {
-    const { formData, serviceType } = req.body;
+    // Extract serviceType and everything else becomes formData
+    const { serviceType, ...formData } = req.body;
+    
+    console.log('🔍 CREATE - serviceType:', serviceType);
+    console.log('🔍 CREATE - formData keys:', Object.keys(formData));
     
     // Create the base request
     const groundRequest = new GroundRequest({
       userId: req.userId,
       serviceType: serviceType || 'ltl',
       status: serviceType === 'ltl' ? 'processing' : 'pending_carrier_response',
-      formData: formData
+      formData: formData  // Now this contains all the other fields
     });
     
     await groundRequest.save();
