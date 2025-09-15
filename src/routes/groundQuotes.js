@@ -586,7 +586,7 @@ router.post('/manual-carrier-quote', auth, async (req, res) => {
 });
 
 // Get results (existing endpoint for compatibility)
-router.get('/:requestId/results', auth, async (req, res) => {
+router.get('/results/:requestId', auth, async (req, res) => {
   try {
     const request = await GroundRequest.findById(req.params.requestId);
     if (!request) {
