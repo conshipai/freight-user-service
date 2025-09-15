@@ -20,8 +20,7 @@ router.post('/create', auth, async (req, res) => {
       userId: req.userId,
       serviceType: serviceType || 'ltl',
       status: serviceType === 'ltl' ? 'processing' : 'pending_carrier_response',
-      formData: formData,
-      additionalStops: formData.additionalStops || []
+      formData: formData
     });
     
     await groundRequest.save();
