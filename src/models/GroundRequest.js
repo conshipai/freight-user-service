@@ -32,15 +32,7 @@ const groundRequestSchema = new mongoose.Schema({
       default: 'invited'
     }
   }],
-  
-  // Milk run support (multiple stops)
-  additionalStops: [{
-    type: { type: String, enum: ['pickup', 'delivery'] },
-    city: String,
-    state: String,
-    zipCode: String,
-    sequence: Number  // Order of stops
-  }],
+
   
   formData: Object,
   error: String
