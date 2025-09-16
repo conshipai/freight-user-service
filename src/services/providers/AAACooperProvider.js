@@ -129,54 +129,62 @@ class AAACooperProvider extends BaseGroundProvider {
   }
 
   buildSoapRequest(requestData) {
-    // Extract origin and destination
-    const origin = requestData.origin || {};
-    const destination = requestData.destination || {};
-    
-    // Format pickup date as MMDDYYYY
-    const pickupDate = requestData.pickupDate 
-      ? new Date(requestData.pickupDate)
-      : new Date();
-    
-    const month = String(pickupDate.getMonth() + 1).padStart(2, '0');
-    const day = String(pickupDate.getDate()).padStart(2, '0');
-    const year = pickupDate.getFullYear();
-    const billDate = `${month}${day}${year}`;
-    
-    // Build commodity lines
-    const commodityLines = this.buildCommodityLines(requestData.commodities || []);
-    
-    // Build accessorial codes
-    const accessorialCodes = this.buildAccessorialCodes(requestData.accessorials || {});
-    
-    // Build the SOAP request object according to AAA Cooper's schema
-    const request = {
-      Token: this.apiToken,
-      CustomerNumber: this.customerNumber,
-      OriginCity: origin.city || '',
-      OriginState: origin.state || '',
-      OriginZip: String(origin.zipCode || ''),
-      OriginCountryCode: 'USA',
-      DestinationCity: destination.city || '',
-      DestinationState: destination.state || '',
-      DestinationZip: String(destination.zipCode || ''),
-      DestinCountryCode: 'USA',
-      WhoAmI: 'S', // S=Shipper, C=Consignee, 3=Third Party
-      BillDate: billDate,
-      PrePaidCollect: 'P', // P=Prepaid, C=Collect
-      TotalPalletCount: this.calculateTotalPallets(requestData.commodities),
-      AccLine: accessorialCodes,
-      RateEstimateRequestLine: commodityLines
-    };
-
-    // Add Full Coverage if insurance is requested
-    if (requestData.insurance) {
-      request.FullCoverage = 'Y';
-      request.FullCoverageAmount = String(Math.round(requestData.insurance.value || 0));
-    }
-
-    return request;
+  // Extract origin and destination
+  const origin = requestData.origin || {};
+  const destination = requestData.destination || {};
+  
+  // Format pickup date as MMDDYYYY
+  const pickupDate = requestData.pickupDate 
+    ? new Date(requestData.pickupDate)
+    : new Date();
+  
+  const month = String(pickupDate.getMonth() + 1).padStart(2, '0');
+  const day = String(pickupDate.getDate()).padStart(2, '0');
+  const year = pickupDate.getFullYear();
+  const billDate = `${month}${day}${year}`;
+  
+  // Build accessorial array (AccLine)
+  const accLine = [];
+  if (requestData.accessorials?.liftgateDelivery) {
+    accLine.push({ AccCode: 'LGD' });
   }
+  if (requestData.accessorials?.liftgatePickup) {
+    accLine.push({ AccCode: 'LGP' });
+  }
+  // Add more accessorials as needed
+  
+  // Build commodity lines (RateEstimateRequestLine)
+  const rateEstimateRequestLine = (requestData.commodities || []).map(item => ({
+    Class: String(item.class || '50'),
+    Weight: String(Math.ceil(item.weight || 0)),
+    HandlingUnitType: this.getHandlingUnitType(item),
+    HandlingUnits: String(item.quantity || 1),
+    HazMat: item.hazmat ? 'X' : ''
+  }));
+
+  // Build the main request object matching the example structure
+  const request = {
+    Token: this.apiToken,
+    CustomerNumber: this.customerNumber || '1',  // Use '1' as default like in example
+    OriginCity: origin.city || '',
+    OriginState: origin.state || '',
+    OriginZip: String(origin.zipCode || ''),
+    OriginCountryCode: 'USA',
+    DestinationCity: destination.city || '',
+    DestinationState: destination.state || '',
+    DestinationZip: String(destination.zipCode || ''),
+    DestinCountryCode: 'USA',
+    WhoAmI: 'S',
+    BillDate: billDate,
+    PrePaidCollect: 'P',
+    AccLine: accLine,
+    RateEstimateRequestLine: rateEstimateRequestLine
+  };
+
+  console.log('📤 SOAP Request Structure:', JSON.stringify(request, null, 2));
+  
+  return request;
+}
 
   buildCommodityLines(commodities) {
     return commodities.map((item, index) => {
