@@ -7,6 +7,7 @@ const debugRoutes = require('./routes/debug');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -25,6 +26,7 @@ const bookingRoutes = require('./routes/bookings');
 const groundQuoteRoutes = require('./routes/groundQuotes');
 const bolRoutes = require('./routes/bols');
 const carrierAccountRoutes = require('./routes/carrierAccounts');
+const cacheRoutes = require('./routes/cache');
 
 // ✅ NEW: sequences & storage
 const sequenceRoutes = require('./routes/sequences');
@@ -47,6 +49,7 @@ app.use('/api/address-book', require('./routes/addressBook'));
 app.use('/api/carriers', require('./routes/carriers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/carrier-accounts', require('./routes/carrierAccounts'));
+app.use('/api', cacheRoutes);
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
