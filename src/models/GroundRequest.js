@@ -1,14 +1,23 @@
 // src/models/GroundRequest.js - UPDATED
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const groundRequestSchema = new mongoose.Schema({
   requestNumber: String,
   userId: mongoose.Schema.Types.ObjectId,
   serviceType: String,
+  
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['processing', 'pending_carrier_response', 'quoted', 'failed', 'booked'],
-    default: 'processing'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,
+      ShipmentLifecycle.QUOTE_PROCESSING,
+      ShipmentLifecycle.QUOTE_READY,
+      ShipmentLifecycle.QUOTE_EXPIRED,
+      ShipmentLifecycle.BOOKING_CREATED  // For 'booked' status
+    ],
+    default: ShipmentLifecycle.QUOTE_PROCESSING
   },
   
   // NEW: Carrier invitation tracking
