@@ -4,14 +4,14 @@ const GroundCost = require('../../models/GroundCost');
 const GroundQuote = require('../../models/GroundQuote');
 const User = require('../../models/User');
 const Company = require('../../models/Company');
-
+const { ShipmentLifecycle } = require('../../constants/shipmentLifecycle');
 /**
  * Validate carrier token and get request details
  */
 async function validateCarrierToken(token) {
   const request = await GroundRequest.findOne({
     'carrierTokens.token': token,
-    status: { $in: ['pending_carrier_response', 'quoted'] }
+    status: { $in: [ShipmentLifecycle.QUOTE_PROCESSING, ShipmentLifecycle.QUOTE_READY] }
   });
 
   if (!request) {
@@ -102,7 +102,7 @@ async function submitCarrierQuote(token, quoteData) {
       additionalFees,
       carrierNotes: notes,
       driverInfo,
-      status: 'completed',
+      status: ShipmentLifecycle.QUOTE_READY,
       submittedAt: new Date()
     });
 
@@ -179,7 +179,7 @@ async function submitCarrierQuote(token, quoteData) {
         validUntil: validUntil || new Date(Date.now() + 48 * 60 * 60 * 1000) // 48 hours default
       },
       
-      status: 'active',
+      status: ShipmentLifecycle.QUOTE_READY,
       validUntil: validUntil || new Date(Date.now() + 48 * 60 * 60 * 1000),
       
       ranking: {
@@ -199,7 +199,7 @@ async function submitCarrierQuote(token, quoteData) {
     // Check if this is the first quote
     const submittedCount = request.carrierTokens.filter(t => t.submitted).length;
     if (submittedCount === 1) {
-      request.status = 'quoted';
+      request.status = ShipmentLifecycle.QUOTE_READY;
       console.log('🎯 First quote received, updating status to quoted');
     }
 
@@ -226,7 +226,7 @@ async function submitCarrierQuote(token, quoteData) {
  * Update quote rankings based on price and transit time
  */
 async function updateQuoteRankings(requestId) {
-  const quotes = await GroundQuote.find({ requestId, status: 'active' })
+  const quotes = await GroundQuote.find({ requestId, status: ShipmentLifecycle.QUOTE_READY })
     .sort({ 'customerPrice.total': 1 }); // Sort by price ascending
 
   if (quotes.length === 0) return;
