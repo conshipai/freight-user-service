@@ -9,7 +9,7 @@ const auth = require('../middleware/auth');
 const { processGroundQuote } = require('../services/ground/processGroundQuote');
 const carrierApi = require('../services/carrierApi');
 const emailService = require('../services/emailService');
-
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle');
 // Main create endpoint - handles all service types
 router.post('/create', auth, async (req, res) => {
   try {
@@ -23,7 +23,7 @@ router.post('/create', auth, async (req, res) => {
     const groundRequest = new GroundRequest({
       userId: req.userId,
       serviceType: serviceType || 'ltl',
-      status: serviceType === 'ltl' ? 'processing' : 'pending_carrier_response',
+      status: ShipmentLifecycle.QUOTE_PROCESSING,
       formData: formData  // Now this contains all the other fields
     });
     
@@ -36,7 +36,7 @@ router.post('/create', auth, async (req, res) => {
         success: true,
         requestId: groundRequest._id.toString(),
         requestNumber: groundRequest.requestNumber,
-        status: 'processing'
+        status: ShipmentLifecycle.QUOTE_PROCESSING
       });
       
       // Process in background
@@ -47,7 +47,7 @@ router.post('/create', auth, async (req, res) => {
       const carriers = await carrierApi.getCarriersForService(serviceType);
       
       if (!carriers.carriers || carriers.carriers.length === 0) {
-        groundRequest.status = 'failed';
+        groundRequest.status = ShipmentLifecycle.QUOTE_EXPIRED;
         groundRequest.error = 'No carriers available';
         await groundRequest.save();
         
@@ -114,7 +114,7 @@ router.post('/create', auth, async (req, res) => {
         success: true,
         requestId: groundRequest._id.toString(),
         requestNumber: groundRequest.requestNumber,
-        status: 'pending_carrier_response',
+        status: ShipmentLifecycle.QUOTE_PROCESSING,
         carriersNotified: carriers.carriers.length,
         responseDeadline: responseDeadline
       });
@@ -150,7 +150,7 @@ router.get('/recent', auth, async (req, res) => {
       recentRequests.map(async (request) => {
         const quotes = await GroundQuote.find({ 
           requestId: request._id,
-          status: 'active'
+          status: ShipmentLifecycle.QUOTE_READY
         })
         .select('carrier customerPrice transit createdAt')
         .sort('customerPrice.total')
@@ -377,7 +377,7 @@ router.post('/carrier/submit/:token', async (req, res) => {
         guaranteed: quoteData.guaranteed || false
       },
       
-      status: 'pending_review'  // Needs employee to add markup
+      status: ShipmentLifecycle.QUOTE_PROCESSING
     });
     
     await cost.save();
@@ -406,7 +406,7 @@ router.post('/carrier/submit/:token', async (req, res) => {
     );
     
     if (allResponded) {
-      request.status = 'quoted';
+      request.status = ShipmentLifecycle.QUOTE_READY;;
       await request.save();
     }
     
@@ -595,7 +595,7 @@ router.get('/results/:requestId', auth, async (req, res) => {
     
     const quotes = await GroundQuote.find({
       requestId: request._id,
-      status: 'active'
+      status: ShipmentLifecycle.QUOTE_READY
     }).sort('customerPrice.total');
     
     res.json({
