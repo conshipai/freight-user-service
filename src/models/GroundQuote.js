@@ -1,5 +1,6 @@
 // src/models/GroundQuote.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const groundQuoteSchema = new mongoose.Schema({
   // Link to request and cost
@@ -104,11 +105,16 @@ const groundQuoteSchema = new mongoose.Schema({
     guaranteedBy: String
   },
   
-  // Quote Status
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['draft', 'active', 'selected', 'booked', 'expired', 'declined'],
-    default: 'active'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,
+      ShipmentLifecycle.QUOTE_PROCESSING,
+      ShipmentLifecycle.QUOTE_READY,
+      ShipmentLifecycle.QUOTE_EXPIRED
+    ],
+    default: ShipmentLifecycle.QUOTE_REQUESTED
   },
   
   // Selection/Booking
@@ -172,9 +178,9 @@ groundQuoteSchema.index({ validUntil: 1 });
 
 // Method to check if quote is still valid
 groundQuoteSchema.methods.isValid = function() {
-  if (this.status !== 'active') return false;
+  if (this.status !== ShipmentLifecycle.QUOTE_READY) return false; // UPDATED TO USE CONSTANT
   if (this.validUntil && new Date() > this.validUntil) {
-    this.status = 'expired';
+    this.status = ShipmentLifecycle.QUOTE_EXPIRED; // UPDATED TO USE CONSTANT
     return false;
   }
   return true;
@@ -187,7 +193,7 @@ groundQuoteSchema.methods.select = async function(userId) {
     { requestId: this.requestId, _id: { $ne: this._id } },
     { 
       'selected.isSelected': false,
-      status: 'declined' 
+      status: ShipmentLifecycle.QUOTE_EXPIRED // UPDATED TO USE CONSTANT
     }
   );
   
@@ -197,7 +203,7 @@ groundQuoteSchema.methods.select = async function(userId) {
     selectedAt: new Date(),
     selectedBy: userId
   };
-  this.status = 'selected';
+  this.status = ShipmentLifecycle.QUOTE_READY; // You might want a QUOTE_SELECTED status
   await this.save();
   
   return this;
