@@ -3,7 +3,7 @@ const GroundRequest = require('../../models/GroundRequest');
 const Carrier = require('../../models/Carrier');
 const crypto = require('crypto');
 const emailService = require('../emailService');
-
+const { ShipmentLifecycle } = require('../../constants/shipmentLifecycle');
 /**
  * Process FTL/Expedited quote requests by notifying carriers
  * and waiting for manual responses
@@ -26,7 +26,7 @@ async function processFTLExpeditedQuote(requestId) {
 
     if (carriers.length === 0) {
       await GroundRequest.findByIdAndUpdate(requestId, {
-        status: 'failed',
+        status: ShipmentLifecycle.QUOTE_EXPIRED,
         error: 'No carriers available for this service type'
       });
       return;
@@ -49,7 +49,7 @@ async function processFTLExpeditedQuote(requestId) {
 
     // Update request with carrier tokens
     await GroundRequest.findByIdAndUpdate(requestId, {
-      status: 'pending_carrier_response',
+      status: ShipmentLifecycle.QUOTE_PROCESSING,
       carrierTokens,
       carrierNotificationSentAt: new Date()
     });
@@ -75,7 +75,7 @@ async function processFTLExpeditedQuote(requestId) {
   } catch (error) {
     console.error('❌ Error in processFTLExpeditedQuote:', error);
     await GroundRequest.findByIdAndUpdate(requestId, {
-      status: 'failed',
+      status: ShipmentLifecycle.QUOTE_EXPIRED,
       error: error.message
     });
     throw error;
@@ -256,17 +256,17 @@ function scheduleResponseCheck(requestId, delayMs) {
       // Count how many carriers responded
       const responses = request.carrierTokens.filter(t => t.submitted).length;
       
-      if (request.status === 'pending_carrier_response') {
+      if (request.status === ShipmentLifecycle.QUOTE_PROCESSING) {
         if (responses > 0) {
           // Update status to quoted if we have responses
           await GroundRequest.findByIdAndUpdate(requestId, {
-            status: 'quoted'
+            status: ShipmentLifecycle.QUOTE_READY
           });
           console.log(`✅ Request ${request.requestNumber}: ${responses} quotes received`);
         } else {
           // No responses received
           await GroundRequest.findByIdAndUpdate(requestId, {
-            status: 'failed',
+            status: ShipmentLifecycle.QUOTE_EXPIRED,
             error: 'No carriers responded within the deadline'
           });
           console.log(`⚠️ Request ${request.requestNumber}: No carrier responses`);
