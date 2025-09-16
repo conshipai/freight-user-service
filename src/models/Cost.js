@@ -1,5 +1,6 @@
 // src/models/Cost.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const costSchema = new mongoose.Schema({
   requestId: {
@@ -58,11 +59,16 @@ const costSchema = new mongoose.Schema({
   // Performance
   responseTimeMs: Number,
   
-  // Status
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'failed'],
-    default: 'pending'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,  // Maps to 'pending'
+      ShipmentLifecycle.QUOTE_PROCESSING,  // Maps to 'processing'
+      ShipmentLifecycle.QUOTE_READY,       // Maps to 'completed'
+      ShipmentLifecycle.QUOTE_EXPIRED      // Maps to 'failed'
+    ],
+    default: ShipmentLifecycle.QUOTE_REQUESTED
   },
   error: String,
   retryCount: { type: Number, default: 0 },
