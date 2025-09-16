@@ -1,6 +1,6 @@
-
 // src/models/Booking.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const BookingSchema = new mongoose.Schema({
   // Existing unique identifiers (keep as is)
@@ -17,7 +17,8 @@ const BookingSchema = new mongoose.Schema({
     type: String, 
     required: function() {
       // Only required if carrier is assigned
-      return this.status === 'CARRIER_ASSIGNED' || this.status === 'IN_TRANSIT';
+      return this.status === ShipmentLifecycle.BOOKING_CARRIER_ASSIGNED || 
+             this.status === ShipmentLifecycle.SHIPMENT_IN_TRANSIT;
     }
   },
   
@@ -36,11 +37,16 @@ const BookingSchema = new mongoose.Schema({
   carrier: String,
   price: Number,
   
-  // ENHANCED Status tracking - add new statuses
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: Object.values(ShipmentLifecycle).filter(s => s.startsWith('BOOKING_')),
-    default: 'BOOKING_CREATED'
+    enum: [
+      ShipmentLifecycle.BOOKING_CREATED,
+      ShipmentLifecycle.BOOKING_CONFIRMED,
+      ShipmentLifecycle.BOOKING_CARRIER_ASSIGNED,
+      ShipmentLifecycle.SHIPMENT_IN_TRANSIT  // Note: This crosses into shipment statuses
+    ],
+    default: ShipmentLifecycle.BOOKING_CREATED
   },
   
   // NEW: Detailed origin information (optional for backward compatibility)
