@@ -1,5 +1,6 @@
 // src/models/Quote.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const quoteSchema = new mongoose.Schema({
   quoteNumber: {
@@ -77,11 +78,16 @@ const quoteSchema = new mongoose.Schema({
   // Selected rate (after customer chooses)
   selectedRateId: mongoose.Schema.Types.ObjectId,
   
-  // Status
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['draft', 'pending', 'ready', 'sent', 'accepted', 'expired', 'booked'],
-    default: 'draft'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,
+      ShipmentLifecycle.QUOTE_PROCESSING,
+      ShipmentLifecycle.QUOTE_READY,
+      ShipmentLifecycle.QUOTE_EXPIRED
+    ],
+    default: ShipmentLifecycle.QUOTE_REQUESTED
   },
   
   // Validity
