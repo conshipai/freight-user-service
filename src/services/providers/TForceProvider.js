@@ -6,31 +6,26 @@ class TForceProvider {
     // OAuth Configuration
     this.clientId = config.clientId || process.env.TFORCE_CLIENT_ID;
     this.clientSecret = config.clientSecret || process.env.TFORCE_CLIENT_SECRET;
-    this.tokenUrl = process.env.TFORCE_TOKEN_URL;
-    this.scope = process.env.TFORCE_SCOPE;
-    this.apiUrl = process.env.TFORCE_API_URL || 'https://api.tforcefreight.com/rating';
+    this.tokenUrl = 'https://login.microsoftonline.com/ca4f5969-c10f-40d4-8127-e74b691f95de/oauth2/v2.0/token';
+    this.scope = 'https://tffproduction.onmicrosoft.com/04cc9749-dbe5-4914-b262-d866b907756b/.default';
+    this.apiUrl = 'https://api.tforcefreight.com/rating';
     
     // Token storage
     this.accessToken = null;
     this.tokenExpiry = null;
     
-    console.log('🚚 TForce Provider initialized (OAuth)');
-    console.log('   - Client ID:', this.clientId ? 'Configured' : 'MISSING!');
-    console.log('   - Client Secret:', this.clientSecret ? 'Configured' : 'MISSING!');
+    console.log('🚚 TForce Provider initialized');
   }
 
-  // Get OAuth token
+  // Get OAuth token (with caching)
   async getAccessToken() {
     try {
-      // Check if we have a valid token
+      // Use cached token if still valid
       if (this.accessToken && this.tokenExpiry && new Date() < this.tokenExpiry) {
-        console.log('✅ Using cached OAuth token');
         return this.accessToken;
       }
 
-      console.log('🔑 Getting new OAuth token from TForce...');
-
-      // Request new token using client credentials flow
+      // Get new token
       const response = await axios.post(
         this.tokenUrl,
         new URLSearchParams({
@@ -40,124 +35,89 @@ class TForceProvider {
           scope: this.scope
         }),
         {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         }
       );
 
-      // Store the token
+      // Cache the token
       this.accessToken = response.data.access_token;
-      // Set expiry to 5 minutes before actual expiry for safety
-      const expiresIn = response.data.expires_in || 3600;
-      this.tokenExpiry = new Date(Date.now() + (expiresIn - 300) * 1000);
-
-      console.log('✅ Got OAuth token, expires at:', this.tokenExpiry.toISOString());
+      this.tokenExpiry = new Date(Date.now() + (response.data.expires_in - 300) * 1000);
+      
       return this.accessToken;
-
     } catch (error) {
-      console.error('❌ Failed to get OAuth token:', error.response?.data || error.message);
-      throw new Error('TForce OAuth authentication failed');
+      console.error('TForce OAuth failed:', error.response?.data || error.message);
+      throw new Error('TForce authentication failed');
     }
   }
 
-  // Main method - this gets called when your system needs a quote
+  // Main method - gets rates
   async getRates(quoteRequest) {
     try {
-      console.log('📦 TForce getRates called');
-
-      // Get OAuth token first
       const token = await this.getAccessToken();
-
-      // Build the request in TForce format
       const tforceRequest = this.buildRequest(quoteRequest);
-      
-      // Make the API call with OAuth token
       const response = await this.callAPI(tforceRequest, token);
-      
-      // Format the response for your system
-      return this.formatResponse(response, quoteRequest);
-      
+      return this.formatResponse(response);
     } catch (error) {
-      console.error('❌ TForce API error:', error.message);
+      console.error('TForce getRates error:', error.message);
       return null;
     }
   }
 
-  // Build request in TForce's format (same as before)
+  // Build TForce request format
   buildRequest(quoteRequest) {
     const pickupDate = quoteRequest.pickupDate 
       ? new Date(quoteRequest.pickupDate)
-      : new Date(Date.now() + 24 * 60 * 60 * 1000);
+      : new Date(Date.now() + 86400000);
     
-    const pickupDateStr = pickupDate.toISOString().split('T')[0];
-
-    const request = {
+    return {
       requestOptions: {
-        serviceCode: "308", // TForce Freight LTL
-        pickupDate: pickupDateStr,
+        serviceCode: "308",
+        pickupDate: pickupDate.toISOString().split('T')[0],
         type: "L",
         densityEligible: false,
         timeInTransit: true,
         quoteNumber: true,
         customerContext: quoteRequest.requestId || "QUOTE"
       },
-      
       shipFrom: {
         address: {
           city: quoteRequest.origin?.city || "",
           stateProvinceCode: quoteRequest.origin?.state || "",
-          postalCode: quoteRequest.origin?.zipCode || "",
+          postalCode: quoteRequest.origin?.zipCode || quoteRequest.origin?.zip || "",
           country: "US"
         }
       },
-      
       shipTo: {
         address: {
-          city: quoteRequest.destination?.city || "",
-          stateProvinceCode: quoteRequest.destination?.state || "",
-          postalCode: quoteRequest.destination?.zipCode || "",
+          city: quoteRequest.destination?.city || quoteRequest.destCity || "",
+          stateProvinceCode: quoteRequest.destination?.state || quoteRequest.destState || "",
+          postalCode: quoteRequest.destination?.zipCode || quoteRequest.destination?.zip || quoteRequest.destZip || "",
           country: "US"
         }
       },
-      
       payment: {
         payer: {
           address: {
             city: quoteRequest.origin?.city || "",
             stateProvinceCode: quoteRequest.origin?.state || "",
-            postalCode: quoteRequest.origin?.zipCode || "",
+            postalCode: quoteRequest.origin?.zipCode || quoteRequest.origin?.zip || "",
             country: "US"
           }
         },
-        billingCode: "10" // Prepaid
+        billingCode: "10"
       },
-      
       commodities: this.buildCommodities(quoteRequest.commodities || [])
     };
-
-    if (quoteRequest.accessorials) {
-      request.serviceOptions = this.buildServiceOptions(quoteRequest.accessorials);
-    }
-
-    return request;
   }
 
-  // Convert your commodities to TForce format
   buildCommodities(commodities) {
     if (!commodities || commodities.length === 0) {
-      // Default commodity if none provided
       return [{
         pieces: 1,
         weight: { weight: 100, weightUnit: "LBS" },
         packagingType: "PLT",
         class: "100",
-        dimensions: {
-          length: 48,
-          width: 40,
-          height: 40,
-          unit: "IN"
-        }
+        dimensions: { length: 48, width: 40, height: 40, unit: "IN" }
       }];
     }
 
@@ -168,7 +128,7 @@ class TForceProvider {
         weightUnit: "LBS"
       },
       packagingType: this.mapPackagingType(item.unitType),
-      class: String(item.freightClass || "100"),
+      class: String(item.freightClass || item.class || "100"),
       dimensions: {
         length: item.length || 48,
         width: item.width || 40,
@@ -178,7 +138,6 @@ class TForceProvider {
     }));
   }
 
-  // Map packaging types
   mapPackagingType(unitType) {
     const mapping = {
       'Pallets': 'PLT',
@@ -187,34 +146,13 @@ class TForceProvider {
       'Bundles': 'BDL',
       'Rolls': 'ROL',
       'Bags': 'BAG',
-      'Drums': 'DRM',
-      'Totes': 'TNK'
+      'Drums': 'DRM'
     };
     return mapping[unitType] || 'PLT';
   }
 
-  // Build service options
-  buildServiceOptions(accessorials) {
-    const options = {
-      pickup: [],
-      delivery: []
-    };
-
-    if (accessorials.includes('liftgate_pickup')) options.pickup.push('LIFO');
-    if (accessorials.includes('liftgate_delivery')) options.delivery.push('LIFD');
-    if (accessorials.includes('residential_pickup')) options.pickup.push('RESP');
-    if (accessorials.includes('residential_delivery')) options.delivery.push('RESD');
-    if (accessorials.includes('inside_pickup')) options.pickup.push('INPU');
-    if (accessorials.includes('inside_delivery')) options.delivery.push('INDE');
-
-    return options;
-  }
-
-  // Make the actual API call with OAuth
   async callAPI(requestBody, token) {
     try {
-      console.log('🔌 Calling TForce API with OAuth token...');
-      
       const response = await axios.post(
         `${this.apiUrl}/getRate?api-version=v1`,
         requestBody,
@@ -222,60 +160,48 @@ class TForceProvider {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            // Some TForce endpoints also want this header
             'Ocp-Apim-Subscription-Key': this.clientId
           },
           timeout: 30000
         }
       );
-
-      console.log('✅ TForce API responded successfully');
       return response.data;
-      
     } catch (error) {
-      if (error.response) {
-        console.error('❌ TForce API Error:', {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data
-        });
-        
-        // If 401, clear token so we get a new one next time
-        if (error.response.status === 401) {
-          this.accessToken = null;
-          this.tokenExpiry = null;
-        }
-      } else {
-        console.error('❌ TForce request failed:', error.message);
+      if (error.response?.status === 401) {
+        this.accessToken = null;
+        this.tokenExpiry = null;
       }
       throw error;
     }
   }
 
-  // Format response (same as before)
-  formatResponse(tforceResponse, originalRequest) {
+  formatResponse(tforceResponse) {
     try {
-      if (!tforceResponse || !tforceResponse.detail || tforceResponse.detail.length === 0) {
-        console.log('⚠️ No rates in TForce response');
-        return null;
-      }
+      if (!tforceResponse?.detail?.[0]) return null;
 
       const detail = tforceResponse.detail[0];
+      const rates = detail.rate || [];
       
-      // Extract charges
-      const grossCharge = detail.rate?.find(r => r.code === 'LND_GROSS');
-      const discountedAmount = detail.rate?.find(r => r.code === 'AFTR_DSCNT');
-      const fuelSurcharge = detail.rate?.find(r => r.code === 'FUEL_SUR');
+      // Extract costs
+      const grossCharge = rates.find(r => r.code === 'LND_GROSS')?.value || 0;
+      const afterDiscount = rates.find(r => r.code === 'AFTR_DSCNT')?.value || 0;
+      const fuelSurcharge = rates.find(r => r.code === 'FUEL_SUR')?.value || 0;
       
-      const totalCost = parseFloat(discountedAmount?.value || grossCharge?.value || 0);
-      const fuel = parseFloat(fuelSurcharge?.value || 0);
+      const totalCost = parseFloat(afterDiscount || grossCharge);
+      const fuel = parseFloat(fuelSurcharge);
       
-      const transitDays = parseInt(detail.timeInTransit?.value || 3);
+      // Get transit time (handle undefined)
+      let transitDays = 5; // default
+      if (detail.timeInTransit?.value) {
+        transitDays = parseInt(detail.timeInTransit.value);
+      }
 
       return {
         provider: 'TFORCE',
         carrierName: 'TForce Freight',
+        carrierCode: 'TFORCE',
         service: detail.service?.description || 'LTL Standard',
+        serviceType: 'ltl',
         
         costs: {
           baseFreight: totalCost - fuel,
@@ -295,15 +221,13 @@ class TForceProvider {
         apiResponse: {
           quoteId: tforceResponse.summary?.quoteNumber,
           validUntil: this.calculateValidUntil(),
-          rawResponse: tforceResponse
+          responseTimeMs: 0
         },
         
-        status: 'completed',
-        expiresAt: this.calculateValidUntil()
+        status: 'completed'
       };
-      
     } catch (error) {
-      console.error('❌ Error formatting TForce response:', error);
+      console.error('Error formatting TForce response:', error);
       return null;
     }
   }
