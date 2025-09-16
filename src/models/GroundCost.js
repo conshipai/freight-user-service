@@ -1,5 +1,6 @@
 // src/models/GroundCost.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const groundCostSchema = new mongoose.Schema({
   // Link to the request
@@ -35,26 +36,6 @@ const groundCostSchema = new mongoose.Schema({
     
     // Accessorial charges simplified to a number
     accessorials: { type: Number, default: 0 },
-
-    /* Old detailed accessorials object (deprecated):
-    accessorials: {
-      liftgatePickup: Number,
-      liftgateDelivery: Number,
-      residentialPickup: Number,
-      residentialDelivery: Number,
-      insidePickup: Number,
-      insideDelivery: Number,
-      limitedAccessPickup: Number,
-      limitedAccessDelivery: Number,
-      appointmentFee: Number,
-      notificationFee: Number,
-      protectFromFreeze: Number,
-      other: [{
-        name: String,
-        amount: Number
-      }]
-    },
-    */
     
     // Totals
     totalAccessorials: Number,
@@ -139,11 +120,15 @@ const groundCostSchema = new mongoose.Schema({
     internalNotes: String  // Not shown to customer
   },
   
-  // Status
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['pending', 'completed', 'error', 'expired'],
-    default: 'pending'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,  // Maps to 'pending'
+      ShipmentLifecycle.QUOTE_READY,       // Maps to 'completed'
+      ShipmentLifecycle.QUOTE_EXPIRED      // Maps to 'error' and 'expired'
+    ],
+    default: ShipmentLifecycle.QUOTE_REQUESTED
   },
   error: String,
   
@@ -178,7 +163,7 @@ groundCostSchema.methods.isValid = function() {
   if (this.expiresAt && new Date() > this.expiresAt) {
     return false;
   }
-  return this.status === 'completed';
+  return this.status === ShipmentLifecycle.QUOTE_READY; // UPDATED TO USE CONSTANT
 };
 
 // Method to calculate total including simplified accessorials
