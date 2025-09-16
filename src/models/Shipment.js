@@ -1,5 +1,6 @@
 //backend/src/models/Shipment.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const ShipmentSchema = new mongoose.Schema({
   // Reference to original booking
@@ -17,20 +18,15 @@ const ShipmentSchema = new mongoose.Schema({
   },
   proNumber: String,
   
-  // Status with milestones
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
     enum: [
-      'CREATED',
-      'DISPATCHED',
-      'ONSITE',
-      'LOADING',
-      'IN_TRANSIT',
-      'AT_DESTINATION',
-      'DELIVERED',
-      'COMPLETED'
+      ShipmentLifecycle.SHIPMENT_CREATED,
+      ShipmentLifecycle.SHIPMENT_IN_TRANSIT,
+      ShipmentLifecycle.SHIPMENT_DELIVERED
     ],
-    default: 'CREATED'
+    default: ShipmentLifecycle.SHIPMENT_CREATED
   },
   
   // Parties
@@ -111,7 +107,7 @@ const ShipmentSchema = new mongoose.Schema({
     profitMargin: Number        // Auto-calculated
   },
   
-  // Milestones/Events
+  // Milestones/Events - NOTE: These use different status values than the main status
   milestones: [{
     type: {
       type: String,
