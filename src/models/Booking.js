@@ -39,8 +39,8 @@ const BookingSchema = new mongoose.Schema({
   // ENHANCED Status tracking - add new statuses
   status: {
     type: String,
-    enum: ['PENDING_CARRIER', 'CARRIER_ASSIGNED', 'CONFIRMED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'],
-    default: 'PENDING_CARRIER'
+    enum: Object.values(ShipmentLifecycle).filter(s => s.startsWith('BOOKING_')),
+    default: 'BOOKING_CREATED'
   },
   
   // NEW: Detailed origin information (optional for backward compatibility)
