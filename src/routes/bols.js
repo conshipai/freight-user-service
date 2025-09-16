@@ -1,52 +1,28 @@
-// ============================================
-// 4. src/routes/bols.js - UPDATED VERSION
-// ============================================
+// src/routes/bols.js
 const express = require('express');
 const router = express.Router();
-const auth = require('../middleware/auth');
-const BOL = require('../models/BOL');
-const Booking = require('../models/Booking');
+const path = require('path');
+const fs = require('fs');
+const bolService = require('../services/bolService');
 
-// Create BOL
-router.post('/', auth, async (req, res) => {
+// Generate new BOL
+router.post('/generate', async (req, res) => {
   try {
-    const { 
-      bookingId, 
-      requestId, 
-      bolNumber, 
-      fileUrl, 
-      fileKey, 
-      documentType 
-    } = req.body;
+    const { bookingId } = req.body;
+    const userId = req.user?._id;
     
-    // Check if booking exists
-    const booking = await Booking.findById(bookingId);
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found'
+    if (!bookingId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Booking ID required' 
       });
     }
     
-    const bol = new BOL({
-      bookingId,
-      requestId,
-      bolNumber,
-      fileUrl,
-      fileKey,
-      documentType,
-      createdBy: req.user._id
-    });
+    const result = await bolService.generateBOL(bookingId, userId);
+    res.json(result);
     
-    await bol.save();
-    
-    res.json({
-      success: true,
-      bolId: bol._id,
-      bol
-    });
   } catch (error) {
-    console.error('BOL creation error:', error);
+    console.error('BOL generation error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -55,91 +31,10 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Get BOL by booking ID
-router.get('/by-booking/:bookingId', auth, async (req, res) => {
+router.get('/booking/:bookingId', async (req, res) => {
   try {
-    const bol = await BOL.findOne({ 
-      bookingId: req.params.bookingId 
-    }).sort('-createdAt');
-    
-    if (!bol) {
-      return res.status(404).json({
-        success: false,
-        error: 'BOL not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      bol
-    });
-  } catch (error) {
-    console.error('Get BOL error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Update booking with BOL info
-router.put('/bookings/:bookingId/bol', auth, async (req, res) => {
-  try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.bookingId,
-      {
-        hasBOL: req.body.hasBOL,
-        bolNumber: req.body.bolNumber,
-        bolId: req.body.bolId,
-        bolFileUrl: req.body.bolFileUrl,
-        bolFileKey: req.body.bolFileKey,
-        bolUpdatedAt: new Date()
-      },
-      { new: true }
-    );
-    
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        error: 'Booking not found'
-      });
-    }
-    
-    res.json({
-      success: true,
-      booking
-    });
-  } catch (error) {
-    console.error('Update booking BOL error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get all BOLs for a booking
-router.get('/booking/:bookingId', auth, async (req, res) => {
-  try {
-    const bols = await BOL.find({ 
-      bookingId: req.params.bookingId 
-    }).sort('-createdAt');
-    
-    res.json({
-      success: true,
-      bols
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get single BOL
-router.get('/:id', auth, async (req, res) => {
-  try {
-    const bol = await BOL.findById(req.params.id);
+    const { bookingId } = req.params;
+    const bol = await bolService.getBOLByBookingId(bookingId);
     
     if (!bol) {
       return res.status(404).json({ 
@@ -148,11 +43,35 @@ router.get('/:id', auth, async (req, res) => {
       });
     }
     
-    res.json({
-      success: true,
-      bol
-    });
+    res.json({ success: true, bol });
   } catch (error) {
+    console.error('Error fetching BOL:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Serve PDF files
+router.get('/pdf/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const filepath = path.join(__dirname, '../../uploads/bols', filename);
+    
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'File not found' 
+      });
+    }
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    fs.createReadStream(filepath).pipe(res);
+    
+  } catch (error) {
+    console.error('Error serving PDF:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
