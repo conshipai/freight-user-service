@@ -1,5 +1,6 @@
 // src/models/Request.js
 const mongoose = require('mongoose');
+const { ShipmentLifecycle } = require('../constants/shipmentLifecycle'); // ADD THIS LINE
 
 const requestSchema = new mongoose.Schema({
   requestNumber: {
@@ -113,11 +114,16 @@ const requestSchema = new mongoose.Schema({
   hasBatteries: { type: Boolean, default: false },
   requestLCLQuote: { type: Boolean, default: false },
   
-  // Status
+  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
   status: {
     type: String,
-    enum: ['pending', 'processing', 'completed', 'failed'],
-    default: 'pending'
+    enum: [
+      ShipmentLifecycle.QUOTE_REQUESTED,
+      ShipmentLifecycle.QUOTE_PROCESSING,
+      ShipmentLifecycle.QUOTE_READY,
+      ShipmentLifecycle.QUOTE_EXPIRED
+    ],
+    default: ShipmentLifecycle.QUOTE_REQUESTED
   },
   
   // Metadata
