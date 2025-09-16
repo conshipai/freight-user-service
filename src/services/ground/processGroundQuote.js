@@ -5,7 +5,7 @@ const GroundQuote = require('../../models/GroundQuote');
 const User = require('../../models/User');
 const Company = require('../../models/Company');
 const GroundProviderFactory = require('../providers/GroundProviderFactory');
-
+const { ShipmentLifecycle } = require('../../constants/shipmentLifecycle');
 // Helper: robustly coerce accessorials to a single number
 function toAccessorialsNumber(accessorialCharges) {
   if (typeof accessorialCharges === 'number') return accessorialCharges;
@@ -74,7 +74,7 @@ async function processGroundQuote(requestId) {
     if (!Array.isArray(carrierRates) || carrierRates.length === 0) {
       console.log('⚠️ No carriers returned rates');
       await GroundRequest.findByIdAndUpdate(requestId, {
-        status: 'failed',
+        status: ShipmentLifecycle.QUOTE_EXPIRED,
         error: 'No carriers available or all failed to return rates'
       });
       return;
@@ -118,7 +118,7 @@ async function processGroundQuote(requestId) {
             businessDays: transitDays,
             guaranteed: rate.guaranteed || false
           },
-          status: 'completed'
+          status: ShipmentLifecycle.QUOTE_READY
         });
         
         await cost.save();
@@ -203,7 +203,7 @@ async function processGroundQuote(requestId) {
           },
           
           // Status and validity
-          status: 'active',
+          status: ShipmentLifecycle.QUOTE_READY,
           validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           
           // Ranking
@@ -229,7 +229,7 @@ async function processGroundQuote(requestId) {
     }
 
     // Update request status
-    const finalStatus = successfulQuotes > 0 ? 'quoted' : 'failed';
+    const finalStatus = successfulQuotes > 0 ? ShipmentLifecycle.QUOTE_READY : ShipmentLifecycle.QUOTE_EXPIRED;
     await GroundRequest.findByIdAndUpdate(requestId, {
       status: finalStatus,
       error: successfulQuotes === 0 ? 'Failed to create any quotes' : null
@@ -245,7 +245,7 @@ async function processGroundQuote(requestId) {
     console.error('   Stack:', error.stack);
     
     await GroundRequest.findByIdAndUpdate(requestId, {
-      status: 'failed',
+      status: ShipmentLifecycle.QUOTE_EXPIRED,
       error: error.message
     });
   }
