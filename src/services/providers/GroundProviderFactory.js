@@ -3,6 +3,7 @@ const STGProvider = require('./ground/STGProvider');
 const SEFLProvider = require('./ground/SEFLProvider');
 const CarrierAccount = require('../../models/CarrierAccount');
 const AAACooperProvider = require('./AAACooperProvider');
+const TForceProvider = require('./TForceProvider');
 
 class GroundProviderFactory {
   constructor() {
@@ -11,6 +12,7 @@ class GroundProviderFactory {
       'STG': STGProvider,
       'SEFL': SEFLProvider,
       'AAA_COOPER': AAACooperProvider,
+      'TFORCE': TForceProvider,
       // Add more as you create them:
       // 'FEDEX_FREIGHT': FedExFreightProvider,
       // 'OLD_DOMINION': OldDominionProvider,
@@ -46,6 +48,7 @@ class GroundProviderFactory {
       'AAA_COOPER': 'AAA_COOPER',
       'FEDEX_FREIGHT': 'FEDEX_FREIGHT',
       'OLD_DOMINION': 'OLD_DOMINION',
+      'TFORCE': 'TFORCE',
       'XPO': 'XPO',
       'ESTES': 'ESTES',
       'RL_CARRIERS': 'RL_CARRIERS',
