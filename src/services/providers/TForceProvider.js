@@ -236,7 +236,7 @@ class TForceProvider {
 
   formatResponse(tforceResponse) {
     try {
-      if (!tforceResponse?.detail?>[0]) {
+      if (!tforceResponse?.detail?.[0]) {
         console.log(`${this.code}: No rates in response`);
         return null;
       }
