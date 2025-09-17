@@ -162,55 +162,64 @@ class TForceProvider {
   }
 
   buildCommodities(commodities) {
-    if (!commodities || commodities.length === 0) {
-      console.warn('⚠️ TForce: No commodities provided, using defaults');
-      return [{
-        pieces: 1,
-        weight: { weight: 100, weightUnit: "LBS" },
-        packagingType: "PLT",
-        class: "100",
-        dimensions: { length: 48, width: 40, height: 48, unit: "IN" }
-      }];
-    }
-
-    return commodities.map((item, index) => {
-      // Get the freight class - check multiple possible field names
-      let freightClass = item.freightClass || 
-                        item.nmfcClass || 
-                        item.calculatedClass || 
-                        item.overrideClass || 
-                        item.class || 
-                        "100";
-      
-      // Ensure it's a string without decimals for TForce
-      freightClass = String(Math.round(parseFloat(freightClass) || 100));
-      
-      console.log(`  Commodity ${index + 1}: Class=${freightClass}, Weight=${item.weight}lbs`);
-      
-      const commodity = {
-        pieces: parseInt(item.quantity) || 1,
-        weight: {
-          weight: parseFloat(item.weight) || 100,
-          weightUnit: "LBS"
-        },
-        packagingType: this.mapPackagingType(item.unitType),
-        class: freightClass, // TForce expects field named "class"
-        dimensions: {
-          length: Math.min(parseFloat(item.length) || 48, 96), // Cap at 96 inches
-          width: Math.min(parseFloat(item.width) || 40, 96),
-          height: Math.min(parseFloat(item.height) || 48, 96),
-          unit: "IN"
-        }
-      };
-      
-      // Add description if available
-      if (item.description) {
-        commodity.description = item.description.substring(0, 50); // TForce has length limit
-      }
-      
-      return commodity;
-    });
+  if (!commodities || commodities.length === 0) {
+    console.warn('⚠️ TForce: No commodities provided, using defaults');
+    return [{
+      pieces: 1,
+      weight: { weight: 100, weightUnit: "LBS" },
+      packagingType: "PLT",
+      class: "100",
+      dimensions: { length: 48, width: 40, height: 48, unit: "IN" }
+    }];
   }
+
+  return commodities.map((item, index) => {
+    // Get the freight class from various possible field names
+    let freightClass = item.freightClass || 
+                      item.nmfcClass || 
+                      item.calculatedClass || 
+                      item.overrideClass || 
+                      item.class || 
+                      "100";
+    
+    // Ensure it's a string without decimals for TForce
+    freightClass = String(Math.round(parseFloat(freightClass) || 100));
+    
+    // CRITICAL: TForce expects weight PER PIECE, not total weight
+    const totalWeight = parseFloat(item.weight) || 100;
+    const quantity = parseInt(item.quantity) || 1;
+    const weightPerPiece = Math.round(totalWeight / quantity);
+    
+    console.log(`  📦 TForce Commodity ${index + 1}:`);
+    console.log(`    Class: ${freightClass} (from ${item.calculatedClass ? 'calculated' : 'override'})`);
+    console.log(`    Total Weight: ${totalWeight} lbs`);
+    console.log(`    Quantity: ${quantity} pieces`);
+    console.log(`    Weight PER PIECE: ${weightPerPiece} lbs (${totalWeight}÷${quantity})`);
+    
+    const commodity = {
+      pieces: quantity,
+      weight: {
+        weight: weightPerPiece,  // ← THIS IS THE FIX! Weight PER PIECE
+        weightUnit: "LBS"
+      },
+      packagingType: this.mapPackagingType(item.unitType),
+      class: freightClass,  // Using the actual class, not always "100"
+      dimensions: {
+        length: Math.min(parseFloat(item.length) || 48, 96),
+        width: Math.min(parseFloat(item.width) || 40, 96),
+        height: Math.min(parseFloat(item.height) || 48, 96),
+        unit: "IN"
+      }
+    };
+    
+    // Add description if available
+    if (item.description) {
+      commodity.description = item.description.substring(0, 50);
+    }
+    
+    return commodity;
+  });
+}
 
   mapPackagingType(unitType) {
     const mapping = {
