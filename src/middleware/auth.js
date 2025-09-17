@@ -2,7 +2,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-// Your existing auth middleware function
+// Your existing auth middleware function (keep it exactly as it was)
 const auth = async (req, res, next) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
@@ -26,24 +26,16 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Add checkRole as a property of the auth function
+// NEW: Add checkRole function as a property
 auth.checkRole = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        error: 'Authentication required' 
-      });
+      return res.status(401).json({ error: 'Authentication required' });
     }
     
     const userRole = req.user.role || req.user.userType;
     
-    if (!userRole) {
-      return res.status(403).json({ 
-        error: 'No role assigned to user' 
-      });
-    }
-    
-    if (!allowedRoles.includes(userRole)) {
+    if (!userRole || !allowedRoles.includes(userRole)) {
       return res.status(403).json({ 
         error: 'Insufficient permissions',
         required: allowedRoles,
@@ -55,7 +47,7 @@ auth.checkRole = (allowedRoles) => {
   };
 };
 
-// Add isEmployee as a property of auth
+// NEW: Add isEmployee function as a property
 auth.isEmployee = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -65,37 +57,11 @@ auth.isEmployee = (req, res, next) => {
   const userRole = req.user.role || req.user.userType;
   
   if (!employeeRoles.includes(userRole)) {
-    return res.status(403).json({ 
-      error: 'Employee access only' 
-    });
+    return res.status(403).json({ error: 'Employee access only' });
   }
   
   next();
 };
 
-// Add isOwnerOrEmployee as a property
-auth.isOwnerOrEmployee = (resourceField = 'customerId') => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-    
-    const userRole = req.user.role || req.user.userType;
-    const employeeRoles = ['conship_employee', 'system_admin', 'admin'];
-    
-    // Employees can access anything
-    if (employeeRoles.includes(userRole)) {
-      req.isEmployee = true;
-      return next();
-    }
-    
-    // For regular users, we'll check ownership in the route
-    req.checkOwnership = true;
-    req.ownerField = resourceField;
-    next();
-  };
-};
-
-// IMPORTANT: Export the auth function directly (NOT as an object)
-// This maintains backward compatibility with your existing code
+// Export the auth function directly (this keeps your existing code working)
 module.exports = auth;
