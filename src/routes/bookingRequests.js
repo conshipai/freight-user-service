@@ -4,8 +4,10 @@ const router = express.Router();
 const BookingRequest = require('../models/BookingRequest');
 const Quote = require('../models/Quote'); // Your existing quote model
 const Shipment = require('../models/Shipment'); // Your existing shipment model
-const { authenticateToken, checkRole } = require('../middleware/auth');
-const { sendEmail } = require('../services/emailService');
+
+const { auth, checkRole, isEmployee } = require('../middleware/auth');
+
+//const { sendEmail } = require('../services/emailService');
 
 // 1. CREATE BOOKING REQUEST (Customer endpoint)
 router.post('/create-request', authenticateToken, async (req, res) => {
