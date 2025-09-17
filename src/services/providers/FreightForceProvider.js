@@ -199,8 +199,9 @@ class TForceProvider {
     const commodity = {
       pieces: quantity,
       weight: {
-        weight: weightPerPiece,  // ← THIS IS THE FIX! Weight PER PIECE
-        weightUnit: "LBS"
+        weight: {
+          weight: Math.round(parseFloat(item.weight) / parseInt(item.quantity || 1)),
+          weightUnit: "LBS"
       },
       packagingType: this.mapPackagingType(item.unitType),
       class: freightClass,  // Using the actual class, not always "100"
