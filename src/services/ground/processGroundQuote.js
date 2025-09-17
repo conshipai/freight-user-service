@@ -1,4 +1,4 @@
-// src/services/ground/processGroundQuote.js - FIXED VERSION
+// src/services/ground/processGroundQuote.js - FIXED WITH UNIT CONVERSION
 const GroundRequest = require('../../models/GroundRequest');
 const GroundCost = require('../../models/GroundCost');
 const GroundQuote = require('../../models/GroundQuote');
@@ -6,6 +6,64 @@ const User = require('../../models/User');
 const Company = require('../../models/Company');
 const GroundProviderFactory = require('../providers/GroundProviderFactory');
 const { ShipmentLifecycle } = require('../../constants/shipmentLifecycle');
+
+// ============================================
+// UNIT CONVERSION UTILITIES
+// ============================================
+const UnitConverter = {
+  // Metric to Imperial
+  kgToLbs: (kg) => parseFloat(kg) * 2.20462,
+  cmToIn: (cm) => parseFloat(cm) / 2.54,
+  
+  // Imperial to Metric  
+  lbsToKg: (lbs) => parseFloat(lbs) / 2.20462,
+  inToCm: (inches) => parseFloat(inches) * 2.54,
+  
+  // Convert commodity to imperial for carriers
+  convertCommodityToImperial: (commodity) => {
+    // If no useMetric flag or already imperial, return with parsed numbers
+    if (!commodity.useMetric) {
+      return {
+        ...commodity,
+        weight: parseFloat(commodity.weight) || 0,
+        length: parseFloat(commodity.length) || 0,
+        width: parseFloat(commodity.width) || 0,
+        height: parseFloat(commodity.height) || 0,
+        quantity: parseInt(commodity.quantity) || 1
+      };
+    }
+    
+    console.log('  📐 Converting metric commodity to imperial:');
+    console.log(`     Weight: ${commodity.weight} kg → ${UnitConverter.kgToLbs(commodity.weight || 0).toFixed(2)} lbs`);
+    console.log(`     Dims: ${commodity.length}×${commodity.width}×${commodity.height} cm`);
+    
+    // Convert metric to imperial
+    const converted = {
+      ...commodity,
+      weight: commodity.weight ? UnitConverter.kgToLbs(commodity.weight).toFixed(2) : 0,
+      length: commodity.length ? UnitConverter.cmToIn(commodity.length).toFixed(2) : 0,
+      width: commodity.width ? UnitConverter.cmToIn(commodity.width).toFixed(2) : 0,
+      height: commodity.height ? UnitConverter.cmToIn(commodity.height).toFixed(2) : 0,
+      quantity: parseInt(commodity.quantity) || 1,
+      useMetric: false // Mark as converted
+    };
+    
+    console.log(`     → ${converted.length}×${converted.width}×${converted.height} inches`);
+    
+    return converted;
+  },
+  
+  // Cap dimensions for carriers with limits (like TForce)
+  capDimensions: (commodity, maxDimension = 96) => {
+    return {
+      ...commodity,
+      length: Math.min(parseFloat(commodity.length) || 0, maxDimension),
+      width: Math.min(parseFloat(commodity.width) || 0, maxDimension),
+      height: Math.min(parseFloat(commodity.height) || 0, maxDimension)
+    };
+  }
+};
+
 // Helper: robustly coerce accessorials to a single number
 function toAccessorialsNumber(accessorialCharges) {
   if (typeof accessorialCharges === 'number') return accessorialCharges;
@@ -36,6 +94,45 @@ async function processGroundQuote(requestId) {
     // Extract data from formData
     const formData = request.formData || {};
     
+    // ============================================
+    // CONVERT COMMODITIES TO IMPERIAL
+    // ============================================
+    console.log('📦 Processing commodities for carriers...');
+    const originalCommodities = formData.commodities || [];
+    console.log(`  Found ${originalCommodities.length} commodities to process`);
+    
+    // Check if any commodities use metric
+    const hasMetric = originalCommodities.some(c => c.useMetric);
+    if (hasMetric) {
+      console.log('  ⚠️ Metric units detected - will convert to imperial for carriers');
+    }
+    
+    // Convert all commodities to imperial and cap dimensions
+    const imperialCommodities = originalCommodities.map((commodity, index) => {
+      console.log(`\n  📦 Processing commodity ${index + 1}:`);
+      console.log(`     Unit type: ${commodity.unitType || 'Pallets'}`);
+      console.log(`     Quantity: ${commodity.quantity || 1}`);
+      console.log(`     Using metric: ${commodity.useMetric ? 'YES' : 'NO'}`);
+      
+      // Convert to imperial if needed
+      const imperialCommodity = UnitConverter.convertCommodityToImperial(commodity);
+      
+      // Cap dimensions at 96 inches (TForce and others have this limit)
+      const cappedCommodity = UnitConverter.capDimensions(imperialCommodity, 96);
+      
+      // Log if dimensions were capped
+      if (parseFloat(imperialCommodity.length) > 96 || 
+          parseFloat(imperialCommodity.width) > 96 || 
+          parseFloat(imperialCommodity.height) > 96) {
+        console.log('     ⚠️ Dimensions capped at 96 inches for carrier limits');
+      }
+      
+      console.log(`     Final (imperial): ${cappedCommodity.weight} lbs, ${cappedCommodity.length}×${cappedCommodity.width}×${cappedCommodity.height} inches`);
+      
+      return cappedCommodity;
+    });
+    
+    // Build carrier request with IMPERIAL commodities
     const carrierRequestData = {
       origin: {
         city: formData.originCity,
@@ -48,7 +145,7 @@ async function processGroundQuote(requestId) {
         zipCode: formData.destZip
       },
       pickupDate: formData.pickupDate,
-      commodities: formData.commodities || [],
+      commodities: imperialCommodities,  // USE CONVERTED COMMODITIES
       accessorials: {
         liftgatePickup: formData.liftgatePickup,
         liftgateDelivery: formData.liftgateDelivery,
@@ -60,7 +157,13 @@ async function processGroundQuote(requestId) {
       serviceType: request.serviceType || 'standard'
     };
 
-    console.log('📦 Getting rates from carriers...');
+    // Debug log for what we're sending to carriers
+    console.log('\n🚚 Sending to carriers:');
+    console.log(`  Origin: ${carrierRequestData.origin.city}, ${carrierRequestData.origin.state} ${carrierRequestData.origin.zipCode}`);
+    console.log(`  Destination: ${carrierRequestData.destination.city}, ${carrierRequestData.destination.state} ${carrierRequestData.destination.zipCode}`);
+    console.log(`  Commodities: ${imperialCommodities.length} items (all in imperial units)`);
+    
+    console.log('\n📊 Getting rates from carriers...');
 
     // Get rates from carriers
     const carrierRates = await GroundProviderFactory.getRatesWithCustomerAccounts(
