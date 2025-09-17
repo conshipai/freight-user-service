@@ -6,7 +6,7 @@ const Quote = require('../models/Quote');
 const Shipment = require('../models/Shipment');
 
 // Import your updated auth middleware
-const { auth, checkRole, isEmployee } = require('../middleware/auth');
+const auth = require('../middleware/auth');
 
 // For sending emails (if you have this service)
 // const { sendEmail } = require('../services/emailService');
@@ -102,7 +102,7 @@ router.post('/create-request', auth, async (req, res) => {
 });
 
 // 2. GET PENDING BOOKINGS (Employee only)
-router.get('/pending', auth, checkRole(['conship_employee', 'system_admin', 'admin']), async (req, res) => {
+router.get('/pending', auth, auth.checkRole(['conship_employee', 'system_admin', 'admin']), async (req, res) => {
   try {
     const { status = 'pending_review', page = 1, limit = 20 } = req.query;
     
@@ -134,7 +134,7 @@ router.get('/pending', auth, checkRole(['conship_employee', 'system_admin', 'adm
 });
 
 // 3. APPROVE BOOKING (Employee only)
-router.post('/:id/approve', auth, isEmployee, async (req, res) => {
+router.post('/:id/approve', auth, auth.isEmployee, async (req, res) => {
   try {
     const { id } = req.params;
     const { notes } = req.body;
