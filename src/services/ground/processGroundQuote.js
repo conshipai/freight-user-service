@@ -6,7 +6,6 @@ const User = require('../../models/User');
 const Company = require('../../models/Company');
 const GroundProviderFactory = require('../providers/GroundProviderFactory');
 const { ShipmentLifecycle } = require('../../constants/shipmentLifecycle');
-
 // ============================================
 // UNIT CONVERSION UTILITIES
 // ============================================
@@ -20,16 +19,21 @@ const UnitConverter = {
   inToCm: (inches) => parseFloat(inches) * 2.54,
   
   // Convert commodity to imperial for carriers
+  // 🔐 PRESERVES calculatedClass / overrideClass / useOverride
   convertCommodityToImperial: (commodity) => {
     // If no useMetric flag or already imperial, return with parsed numbers
     if (!commodity.useMetric) {
       return {
-        ...commodity,
+        ...commodity, // PRESERVE ALL FIELDS including calculatedClass!
         weight: parseFloat(commodity.weight) || 0,
         length: parseFloat(commodity.length) || 0,
         width: parseFloat(commodity.width) || 0,
         height: parseFloat(commodity.height) || 0,
-        quantity: parseInt(commodity.quantity) || 1
+        quantity: parseInt(commodity.quantity) || 1,
+        // KEEP THE CLASS FIELDS
+        calculatedClass: commodity.calculatedClass,
+        overrideClass: commodity.overrideClass,
+        useOverride: commodity.useOverride
       };
     }
     
@@ -39,17 +43,25 @@ const UnitConverter = {
     
     // Convert metric to imperial
     const converted = {
-      ...commodity,
-      weight: commodity.weight ? UnitConverter.kgToLbs(commodity.weight).toFixed(2) : 0,
-      length: commodity.length ? UnitConverter.cmToIn(commodity.length).toFixed(2) : 0,
-      width: commodity.width ? UnitConverter.cmToIn(commodity.width).toFixed(2) : 0,
-      height: commodity.height ? UnitConverter.cmToIn(commodity.height).toFixed(2) : 0,
+      ...commodity, // PRESERVE ALL FIELDS!
+      weight: commodity.weight ? Number(UnitConverter.kgToLbs(commodity.weight).toFixed(2)) : 0,
+      length: commodity.length ? Number(UnitConverter.cmToIn(commodity.length).toFixed(2)) : 0,
+      width:  commodity.width  ? Number(UnitConverter.cmToIn(commodity.width).toFixed(2))  : 0,
+      height: commodity.height ? Number(UnitConverter.cmToIn(commodity.height).toFixed(2)) : 0,
       quantity: parseInt(commodity.quantity) || 1,
+      // PRESERVE THE CLASS FIELDS
+      calculatedClass: commodity.calculatedClass,
+      overrideClass: commodity.overrideClass,
+      useOverride: commodity.useOverride,
       useMetric: false // Mark as converted
     };
     
-    console.log(`     → ${converted.length}×${converted.width}×${converted.height} inches`);
+    console.log('📐 After conversion, class preserved:', {
+      original: commodity.calculatedClass,
+      converted: converted.calculatedClass
+    });
     
+    console.log(`     → ${converted.length}×${converted.width}×${converted.height} inches`);
     return converted;
   },
   
@@ -63,7 +75,6 @@ const UnitConverter = {
     };
   }
 };
-
 // Helper: robustly coerce accessorials to a single number
 function toAccessorialsNumber(accessorialCharges) {
   if (typeof accessorialCharges === 'number') return accessorialCharges;
@@ -108,29 +119,45 @@ async function processGroundQuote(requestId) {
     }
     
     // Convert all commodities to imperial and cap dimensions
-    const imperialCommodities = originalCommodities.map((commodity, index) => {
-      console.log(`\n  📦 Processing commodity ${index + 1}:`);
-      console.log(`     Unit type: ${commodity.unitType || 'Pallets'}`);
-      console.log(`     Quantity: ${commodity.quantity || 1}`);
-      console.log(`     Using metric: ${commodity.useMetric ? 'YES' : 'NO'}`);
-      
-      // Convert to imperial if needed
-      const imperialCommodity = UnitConverter.convertCommodityToImperial(commodity);
-      
-      // Cap dimensions at 96 inches (TForce and others have this limit)
-      const cappedCommodity = UnitConverter.capDimensions(imperialCommodity, 96);
-      
-      // Log if dimensions were capped
-      if (parseFloat(imperialCommodity.length) > 96 || 
-          parseFloat(imperialCommodity.width) > 96 || 
-          parseFloat(imperialCommodity.height) > 96) {
-        console.log('     ⚠️ Dimensions capped at 96 inches for carrier limits');
-      }
-      
-      console.log(`     Final (imperial): ${cappedCommodity.weight} lbs, ${cappedCommodity.length}×${cappedCommodity.width}×${cappedCommodity.height} inches`);
-      
-      return cappedCommodity;
-    });
+ const imperialCommodities = originalCommodities.map((commodity, index) => {
+  console.log(`\n  📦 Processing commodity ${index + 1}:`);
+  console.log(`     Unit type: ${commodity.unitType || 'Pallets'}`);
+  console.log(`     Quantity: ${commodity.quantity || 1}`);
+  console.log(`     Using metric: ${commodity.useMetric ? 'YES' : 'NO'}`);
+  
+  // Convert to imperial if needed
+  const imperialCommodity = UnitConverter.convertCommodityToImperial(commodity);
+  
+  // Cap dimensions at 96 inches (TForce and others have this limit)
+  const cappedCommodity = UnitConverter.capDimensions(imperialCommodity, 96);
+  
+  // Decide which class to send
+  const classToSend = (cappedCommodity.useOverride && cappedCommodity.overrideClass)
+    ? String(cappedCommodity.overrideClass).trim()
+    : String(cappedCommodity.calculatedClass || '').trim();
+  
+  // 🔑 Decorate with fields expected by carriers:
+  // - 'freightClass' and 'nmfcClass' are commonly accepted
+  // - keep original class fields too
+  const finalCommodity = {
+    ...cappedCommodity,
+    freightClass: classToSend || undefined,
+    nmfcClass: classToSend || undefined,
+    classSource: (cappedCommodity.useOverride && cappedCommodity.overrideClass) ? 'override' : 'calculated'
+  };
+
+  // Log if dimensions were capped
+  if (parseFloat(imperialCommodity.length) > 96 || 
+      parseFloat(imperialCommodity.width) > 96 || 
+      parseFloat(imperialCommodity.height) > 96) {
+    console.log('     ⚠️ Dimensions capped at 96 inches for carrier limits');
+  }
+  
+  console.log(`     Final (imperial): ${finalCommodity.weight} lbs, ${finalCommodity.length}×${finalCommodity.width}×${finalCommodity.height} inches`);
+  console.log(`     Class sent → ${finalCommodity.freightClass} (source: ${finalCommodity.classSource})`);
+  
+  return finalCommodity;
+});
     
     // Build carrier request with IMPERIAL commodities
     const carrierRequestData = {
