@@ -36,10 +36,9 @@ class FreightForceProvider extends BaseProvider {
           contactEmail: this.credentials.contactEmail
         });
       } catch (regError) {
-        // Registration might fail if already registered - that's OK
+        // Already registered is fine
       }
 
-      // Authenticate
       const response = await this.client.post('/api/Auth/token', {
         username: this.credentials.username,
         password: this.credentials.password,
@@ -49,7 +48,6 @@ class FreightForceProvider extends BaseProvider {
       this.token = response.data.token || response.data.access_token;
       this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
       this.client.defaults.headers.common['Authorization'] = `Bearer ${this.token}`;
-      
       return this.token;
     } catch (error) {
       throw new Error(`FreightForce auth failed: ${error.message}`);
@@ -63,28 +61,64 @@ class FreightForceProvider extends BaseProvider {
     return this.token;
   }
 
+  // 🔎 Helper: pick the class to send for FreightForce only
+  pickFreightClass(piece) {
+    // Prefer explicit override when flagged; otherwise calculated
+    const raw =
+      (piece?.useOverride && piece?.overrideClass) ? piece.overrideClass
+      : (piece?.freightClass) ? piece.freightClass
+      : (piece?.nmfcClass) ? piece.nmfcClass
+      : piece?.calculatedClass;
+
+    if (raw == null) return undefined;
+    const v = String(raw).trim();
+    return v.length ? v : undefined;
+  }
+
   transformRequest(request) {
     // Calculate total weight in lbs
     const totalWeight = request.shipment.cargo.pieces.reduce(
-      (sum, piece) => sum + (piece.weight * piece.quantity), 
+      (sum, piece) => sum + ((Number(piece.weight) || 0) * (Number(piece.quantity) || 1)),
       0
     );
+
+    // Map pieces and attach class ONLY for FreightForce
+    const dims = request.shipment.cargo.pieces.map(piece => {
+      const qty = Math.max(1, parseInt(piece.quantity, 10) || 1);
+      const weight = Math.ceil(Number(piece.weight) || 0);
+      const length = Math.ceil(Number(piece.length) || 24);
+      const width  = Math.ceil(Number(piece.width)  || 24);
+      const height = Math.ceil(Number(piece.height) || 24);
+
+      const classToSend = this.pickFreightClass(piece);
+
+      // Build the dimension object; include class fields only if present
+      const dimObj = {
+        qty,
+        weight,
+        length,
+        width,
+        height,
+        description: piece.commodity || "General Cargo"
+      };
+
+      // Many APIs ignore unknown fields; adding both improves compatibility
+      if (classToSend) {
+        dimObj.freightClass = classToSend; // common field name
+        dimObj.nmfcClass = classToSend;    // alternate; harmless if ignored
+      }
+
+      return dimObj;
+    });
 
     return {
       rateType: "L",
       origin: request.shipment.origin.zipCode,
       originType: "Z",
-      destination: request.shipment.origin.airport,
+      destination: request.shipment.origin.airport, // (kept as-is per your current logic)
       destinationType: "T",
       weight: Math.ceil(totalWeight),
-      dimensions: request.shipment.cargo.pieces.map(piece => ({
-        qty: piece.quantity,
-        weight: Math.ceil(piece.weight),
-        length: Math.ceil(piece.length || 24),
-        width: Math.ceil(piece.width || 24),
-        height: Math.ceil(piece.height || 24),
-        description: piece.commodity || "General Cargo"
-      }))
+      dimensions: dims
     };
   }
 
@@ -113,19 +147,14 @@ class FreightForceProvider extends BaseProvider {
 
   async getQuote(request) {
     const startTime = Date.now();
-    
     try {
       await this.ensureValidToken();
-      
       const ffRequest = this.transformRequest(request);
-      
       const response = await this.executeWithRetry(async () => {
         return await this.client.post('/api/Quote', ffRequest);
       });
-      
       const result = this.parseResponse(response.data, request);
       result.responseTimeMs = Date.now() - startTime;
-      
       return result;
     } catch (error) {
       throw new Error(`FreightForce quote failed: ${error.message}`);
