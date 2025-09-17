@@ -26,18 +26,16 @@ const auth = async (req, res, next) => {
   }
 };
 
-// NEW: Add role checking middleware
-const checkRole = (allowedRoles) => {
+// Add role checking as a property of auth
+auth.checkRole = (allowedRoles) => {
   return (req, res, next) => {
-    // Make sure auth middleware has already run
     if (!req.user) {
       return res.status(401).json({ 
         error: 'Authentication required' 
       });
     }
     
-    // Check if user has required role
-    const userRole = req.user.role || req.user.userType; // Some systems use 'userType'
+    const userRole = req.user.role || req.user.userType;
     
     if (!userRole) {
       return res.status(403).json({ 
@@ -45,7 +43,6 @@ const checkRole = (allowedRoles) => {
       });
     }
     
-    // Check if user's role is in the allowed roles
     if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({ 
         error: 'Insufficient permissions',
@@ -58,8 +55,8 @@ const checkRole = (allowedRoles) => {
   };
 };
 
-// Optional: Middleware to check if user is employee
-const isEmployee = (req, res, next) => {
+// Add isEmployee as a property
+auth.isEmployee = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }
@@ -76,34 +73,5 @@ const isEmployee = (req, res, next) => {
   next();
 };
 
-// Optional: Middleware to check if user owns the resource
-const isOwnerOrEmployee = (resourceField = 'customerId') => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
-    }
-    
-    const userRole = req.user.role || req.user.userType;
-    const employeeRoles = ['conship_employee', 'system_admin', 'admin'];
-    
-    // Employees can access anything
-    if (employeeRoles.includes(userRole)) {
-      return next();
-    }
-    
-    // For regular users, check ownership
-    // This will be checked in the route handler
-    req.checkOwnership = true;
-    req.ownerField = resourceField;
-    next();
-  };
-};
-
-// Export all middleware functions
-module.exports = {
-  auth,           // Keep original name for backward compatibility
-  authenticate: auth,  // Alternative name
-  checkRole,
-  isEmployee,
-  isOwnerOrEmployee
-};
+// Export auth as default (for backward compatibility)
+module.exports = auth;
