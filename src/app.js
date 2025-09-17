@@ -4,6 +4,15 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 const debugRoutes = require('./routes/debug');
+const axios = require('axios');
+const { setupAxiosLogging } = require('./middleware/apiLogger');
+
+// Setup global axios logging
+setupAxiosLogging(axios);
+
+// Also setup for any axios instances you create
+const axiosInstance = axios.create();
+setupAxiosLogging(axiosInstance);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
