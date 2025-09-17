@@ -2,7 +2,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-// Your existing auth middleware
+// Your existing auth middleware function
 const auth = async (req, res, next) => {
   try {
     const token = req.headers.authorization?.replace('Bearer ', '');
@@ -26,7 +26,7 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Add role checking as a property of auth
+// Add checkRole as a property of the auth function
 auth.checkRole = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -55,7 +55,7 @@ auth.checkRole = (allowedRoles) => {
   };
 };
 
-// Add isEmployee as a property
+// Add isEmployee as a property of auth
 auth.isEmployee = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -73,5 +73,29 @@ auth.isEmployee = (req, res, next) => {
   next();
 };
 
-// Export auth as default (for backward compatibility)
+// Add isOwnerOrEmployee as a property
+auth.isOwnerOrEmployee = (resourceField = 'customerId') => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    const userRole = req.user.role || req.user.userType;
+    const employeeRoles = ['conship_employee', 'system_admin', 'admin'];
+    
+    // Employees can access anything
+    if (employeeRoles.includes(userRole)) {
+      req.isEmployee = true;
+      return next();
+    }
+    
+    // For regular users, we'll check ownership in the route
+    req.checkOwnership = true;
+    req.ownerField = resourceField;
+    next();
+  };
+};
+
+// IMPORTANT: Export the auth function directly (NOT as an object)
+// This maintains backward compatibility with your existing code
 module.exports = auth;
