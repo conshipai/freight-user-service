@@ -6,6 +6,7 @@ require('dotenv').config();
 const debugRoutes = require('./routes/debug');
 const axios = require('axios');
 const { setupAxiosLogging } = require('./middleware/apiLogger');
+const bookingRequestRoutes = require('./routes/bookingRequests');
 
 // Setup global axios logging
 setupAxiosLogging(axios);
@@ -59,6 +60,7 @@ app.use('/api/carriers', require('./routes/carriers'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/carrier-accounts', require('./routes/carrierAccounts'));
 app.use('/api', cacheRoutes);
+app.use('/api/booking-requests', bookingRequestRoutes);
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
