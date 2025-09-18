@@ -38,6 +38,41 @@ router.post('/create-request', auth, async (req, res) => {
   }
 });
 
+// GET all booking requests
+router.get('/', auth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const query = {};
+    
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    // Non-admin users only see their own requests
+    if (req.user.role !== 'system_admin' && req.user.role !== 'conship_employee') {
+      query.customerId = req.user._id;
+    }
+    
+    const bookingRequests = await BookingRequest.find(query)
+      .sort({ createdAt: -1 });
+    
+    console.log(`Found ${bookingRequests.length} booking requests for user ${req.user.email}`);
+    
+    res.json({
+      success: true,
+      bookingRequests
+    });
+  } catch (error) {
+    console.error('Error fetching booking requests:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      bookingRequests: [] 
+    });
+  }
+});
+
 // Get pending bookings (employees only)
 router.get('/pending', auth, auth.checkRole(['conship_employee', 'system_admin']), async (req, res) => {
   try {
