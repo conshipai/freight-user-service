@@ -4,7 +4,7 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const Booking = require('../models/Booking');
 
-// ⬇️ ADDED: auth/authorize for protected endpoints
+// ⬇️ Protected endpoints middleware
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 
@@ -80,7 +80,7 @@ router.post('/detailed', auth, async (req, res) => {
       status: 'PENDING_CARRIER',
       pickupNumber: '',
 
-      // Also store in shipmentData for backward compatibility
+      // Backward compatibility
       shipmentData: {
         formData: {
           originCity: bookingData.origin?.city,
@@ -103,8 +103,6 @@ router.post('/detailed', auth, async (req, res) => {
     });
 
     await booking.save();
-
-    // TODO: emailService - notify admin of booking needing carrier assignment
 
     res.json({
       success: true,
@@ -136,7 +134,7 @@ router.get('/', auth, async (req, res) => {
       query.userId = req.user.id;
     }
 
-    // Allow optional status filter
+    // Optional status filter
     if (req.query.status) {
       query.status = req.query.status;
     }
@@ -218,8 +216,6 @@ router.put('/:bookingId/assign-carrier', auth, authorize(['admin', 'employee']),
     booking.updatedAt = new Date();
     await booking.save();
 
-    // TODO: emailService - notify customer about carrier assignment
-
     res.json({
       success: true,
       booking
@@ -244,10 +240,7 @@ router.put('/:bookingId/status', auth, authorize(['admin', 'employee']), async (
 
     const booking = await Booking.findOneAndUpdate(
       { bookingId },
-      {
-        status,
-        updatedAt: new Date()
-      },
+      { status, updatedAt: new Date() },
       { new: true }
     );
 
@@ -258,10 +251,7 @@ router.put('/:bookingId/status', auth, authorize(['admin', 'employee']), async (
       });
     }
 
-    res.json({
-      success: true,
-      booking
-    });
+    res.json({ success: true, booking });
   } catch (error) {
     console.error('Update booking status error:', error);
     res.status(500).json({
@@ -290,6 +280,131 @@ router.get('/by-request/:requestId', async (req, res) => {
   } catch (error) {
     console.error('Get booking by request error:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * Cancel a booking
+ * PUT /api/bookings/:bookingId/cancel
+ */
+router.put('/:bookingId/cancel', auth, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { reason } = req.body;
+
+    // Find booking by bookingId (the string ID, not MongoDB _id)
+    const booking = await Booking.findOne({ bookingId });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking not found'
+      });
+    }
+
+    // Check if user owns this booking (unless they're admin/employee)
+    if (!['system_admin', 'conship_employee'].includes(req.user.role)) {
+      if (booking.userId !== req.user.id && booking.userEmail !== req.user.email) {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to cancel this booking'
+        });
+      }
+    }
+
+    // Check if booking can be cancelled (not already shipped/delivered)
+    const nonCancellableStatuses = ['SHIPMENT_IN_TRANSIT', 'DELIVERED', 'CANCELLED'];
+    if (nonCancellableStatuses.includes(booking.status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot cancel booking with status: ${booking.status}`
+      });
+    }
+
+    // Update booking status to CANCELLED
+    booking.status = 'CANCELLED';
+    booking.cancelledAt = new Date();
+    booking.cancelledBy = req.user.id;
+    booking.cancellationReason = reason || 'User requested cancellation';
+    booking.updatedAt = new Date();
+
+    await booking.save();
+
+    // TODO: emailService - notify customer/admin about cancellation
+
+    res.json({
+      success: true,
+      message: 'Booking cancelled successfully',
+      booking: {
+        bookingId: booking.bookingId,
+        confirmationNumber: booking.confirmationNumber,
+        status: booking.status,
+        cancelledAt: booking.cancelledAt,
+        cancellationReason: booking.cancellationReason
+      }
+    });
+  } catch (error) {
+    console.error('Cancel booking error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Alternative: Cancel using MongoDB _id (soft delete)
+ * DELETE /api/bookings/:id
+ */
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Support both bookingId and MongoDB _id
+    const query = mongoose.Types.ObjectId.isValid(id)
+      ? { _id: id }
+      : { bookingId: id };
+
+    const booking = await Booking.findOne(query);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        error: 'Booking not found'
+      });
+    }
+
+    // Authorization check
+    if (!['system_admin', 'conship_employee'].includes(req.user.role)) {
+      const userIdMatch =
+        booking.userId?.toString() === req.user.id ||
+        booking.userId?.toString() === req.user._id?.toString();
+      const emailMatch = booking.userEmail === req.user.email;
+
+      if (!userIdMatch && !emailMatch) {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to cancel this booking'
+        });
+      }
+    }
+
+    // Soft delete - just update status
+    booking.status = 'CANCELLED';
+    booking.cancelledAt = new Date();
+    booking.cancelledBy = req.user.id || req.user._id;
+    await booking.save();
+
+    res.json({
+      success: true,
+      message: 'Booking cancelled successfully'
+    });
+  } catch (error) {
+    console.error('Delete booking error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
