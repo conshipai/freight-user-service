@@ -14,19 +14,19 @@ const BookingSchema = new mongoose.Schema({
     required: true 
   },
   pickupNumber: { 
-    type: String, 
-    required: function() {
-      // Only required if carrier is assigned
+    type: String,
+    required: function () {
+      // Only required if carrier is assigned or in transit
       return this.status === ShipmentLifecycle.BOOKING_CARRIER_ASSIGNED || 
              this.status === ShipmentLifecycle.SHIPMENT_IN_TRANSIT;
     }
   },
-  
+
   // Link to original quote request (keep as is)
   requestId: {
     type: String,
   },
-  
+
   // Booking details (keep existing, add some new)
   mode: {
     type: String,
@@ -36,20 +36,24 @@ const BookingSchema = new mongoose.Schema({
   serviceType: String, // 'ltl', 'ftl', 'expedited', etc.
   carrier: String,
   price: Number,
-  
-  // UPDATED STATUS FIELD - THIS IS THE MAIN CHANGE
+
+  // UPDATED STATUS FIELD
+  // Include CANCELLED and DELIVERED so routes that set those values don't fail enum validation.
   status: {
     type: String,
     enum: [
       ShipmentLifecycle.BOOKING_CREATED,
       ShipmentLifecycle.BOOKING_CONFIRMED,
       ShipmentLifecycle.BOOKING_CARRIER_ASSIGNED,
-      ShipmentLifecycle.SHIPMENT_IN_TRANSIT  // Note: This crosses into shipment statuses
+      ShipmentLifecycle.SHIPMENT_IN_TRANSIT,
+      // Allow these terminal states (the routes use plain strings):
+      'CANCELLED',
+      'DELIVERED'
     ],
     default: ShipmentLifecycle.BOOKING_CREATED
   },
-  
-  // NEW: Detailed origin information (optional for backward compatibility)
+
+  // Detailed origin information (optional for backward compatibility)
   origin: {
     city: String,
     state: String,
@@ -63,8 +67,8 @@ const BookingSchema = new mongoose.Schema({
     dockHours: String,
     notes: String
   },
-  
-  // NEW: Detailed destination information
+
+  // Detailed destination information
   destination: {
     city: String,
     state: String,
@@ -78,14 +82,14 @@ const BookingSchema = new mongoose.Schema({
     dockHours: String,
     notes: String
   },
-  
-  // NEW: Enhanced commodity information
+
+  // Enhanced commodity information
   totalWeight: Number,
   totalPieces: Number,
   description: String,
   commodityClass: String,
-  
-  // NEW: Individual items (if provided)
+
+  // Individual items (if provided)
   items: [{
     pieces: Number,
     weight: Number,
@@ -94,17 +98,17 @@ const BookingSchema = new mongoose.Schema({
     height: Number,
     description: String
   }],
-  
-  // NEW: Reference numbers (max 4)
+
+  // Reference numbers (max 4)
   referenceNumbers: [{
     type: String,
     value: String
   }],
-  
-  // NEW: Special instructions
+
+  // Special instructions
   specialInstructions: String,
-  
-  // NEW: Carrier assignment fields
+
+  // Carrier assignment fields
   rate: Number,
   etaToPickup: Date,
   carrierNotes: String,
@@ -113,16 +117,16 @@ const BookingSchema = new mongoose.Schema({
     ref: 'User' 
   },
   assignedAt: Date,
-  
+
   // Store all the original form data (keep for backward compatibility)
   shipmentData: mongoose.Schema.Types.Mixed,
-  
+
   // User info (keep existing)
   userId: {
     type: String,
   },
   userEmail: String,
-  
+
   // Documents (keep existing)
   documents: [{
     type: String,
@@ -130,16 +134,23 @@ const BookingSchema = new mongoose.Schema({
     url: String,
     createdAt: Date
   }],
-  
-  // NEW: Dates
+
+  // Dates
   pickupDate: Date,
-  deliveryDate: Date
-  
+  deliveryDate: Date,
+
+  // 🚨 NEW: Cancellation metadata (for cancel endpoints)
+  cancelledAt: Date,
+  cancelledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  },
+  cancellationReason: String
 }, {
   timestamps: true
 });
 
-// Add indexes for better query performance
+// Indexes for better query performance
 BookingSchema.index({ status: 1, createdAt: -1 });
 BookingSchema.index({ userId: 1, createdAt: -1 });
 BookingSchema.index({ 'origin.zip': 1, 'destination.zip': 1 });
