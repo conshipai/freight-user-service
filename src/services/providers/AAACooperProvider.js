@@ -128,7 +128,7 @@ class AAACooperProvider extends BaseGroundProvider {
     }
   }
 
-  buildSoapRequest(requestData) {
+buildSoapRequest(requestData) {
   // Extract origin and destination
   const origin = requestData.origin || {};
   const destination = requestData.destination || {};
@@ -151,21 +151,78 @@ class AAACooperProvider extends BaseGroundProvider {
   if (requestData.accessorials?.liftgatePickup) {
     accLine.push({ AccCode: 'LGP' });
   }
-  // Add more accessorials as needed
+  if (requestData.accessorials?.residentialDelivery) {
+    accLine.push({ AccCode: 'RSD' });
+  }
+  if (requestData.accessorials?.residentialPickup) {
+    accLine.push({ AccCode: 'RSP' });
+  }
+  if (requestData.accessorials?.insideDelivery) {
+    accLine.push({ AccCode: 'ISD' });
+  }
+  if (requestData.accessorials?.insidePickup) {
+    accLine.push({ AccCode: 'ISP' });
+  }
+  if (requestData.accessorials?.limitedAccessDelivery) {
+    accLine.push({ AccCode: 'RAD' });
+  }
+  if (requestData.accessorials?.limitedAccessPickup) {
+    accLine.push({ AccCode: 'RAP' });
+  }
   
   // Build commodity lines (RateEstimateRequestLine)
-  const rateEstimateRequestLine = (requestData.commodities || []).map(item => ({
-    Class: String(item.class || '50'),
-    Weight: String(Math.ceil(item.weight || 0)),
-    HandlingUnitType: this.getHandlingUnitType(item),
-    HandlingUnits: String(item.quantity || 1),
-    HazMat: item.hazmat ? 'X' : ''
-  }));
+  const rateEstimateRequestLine = (requestData.commodities || []).map(item => {
+    // FIXED: Look for class in the right fields
+    // The processGroundQuote decorates commodities with 'freightClass' and 'nmfcClass'
+    const freightClass = String(
+      item.freightClass ||      // Primary field from processGroundQuote
+      item.nmfcClass ||          // Alternative field from processGroundQuote
+      item.calculatedClass ||    // Original calculated class
+      item.overrideClass ||      // Override class if set
+      item.class ||              // Legacy field
+      '100'                      // Default fallback for no class
+    ).trim();
+    
+    // Calculate total weight for this line item
+    const quantity = parseInt(item.quantity) || 1;
+    const weightPerUnit = parseFloat(item.weight) || 0;
+    const totalWeight = Math.ceil(quantity * weightPerUnit);
+    
+    const handlingUnitType = this.getHandlingUnitType(item);
+    
+    const lineItem = {
+      Class: freightClass,
+      Weight: String(totalWeight),
+      HandlingUnitType: handlingUnitType,
+      HandlingUnits: String(quantity),
+      HazMat: item.hazmat ? 'X' : ''
+    };
+    
+    // Add NMFC if provided
+    if (item.nmfc) {
+      lineItem.NMFC = String(item.nmfc);
+      if (item.nmfcSub) {
+        lineItem.NMFCSub = String(item.nmfcSub);
+      }
+    }
+    
+    // Add dimensions if over 96 inches
+    if (item.length > 96 || item.width > 96 || item.height > 96) {
+      lineItem.CubeU = 'IN';
+      lineItem.Length = String(Math.ceil(item.length || 48));
+      lineItem.Width = String(Math.ceil(item.width || 40));
+      lineItem.Height = String(Math.ceil(item.height || 48));
+    }
+    
+    console.log(`🏷️ AAA Cooper commodity: Class ${freightClass}, Weight ${totalWeight} lbs, ${quantity} ${handlingUnitType}`);
+    
+    return lineItem;
+  });
 
   // Build the main request object matching the example structure
   const request = {
     Token: this.apiToken,
-    CustomerNumber: this.customerNumber || '1',  // Use '1' as default like in example
+    CustomerNumber: this.customerNumber || '1',
     OriginCity: origin.city || '',
     OriginState: origin.state || '',
     OriginZip: String(origin.zipCode || ''),
@@ -186,47 +243,60 @@ class AAACooperProvider extends BaseGroundProvider {
   return request;
 }
 
-  buildCommodityLines(commodities) {
-    return commodities.map((item, index) => {
-      // Calculate freight class if not provided
-      let freightClass = item.class;
-      if (!freightClass) {
-        const density = this.calculateDensity(
-          item.weight,
-          item.length || 48,
-          item.width || 40,
-          item.height || 40
-        );
-        freightClass = this.getFreightClass(density);
+// Also update buildCommodityLines method if you still use it elsewhere
+buildCommodityLines(commodities) {
+  return commodities.map((item, index) => {
+    // FIXED: Look for class in multiple possible fields
+    let freightClass = 
+      item.freightClass ||      // From processGroundQuote
+      item.nmfcClass ||          // Alternative from processGroundQuote
+      item.calculatedClass ||    // Original calculated
+      item.overrideClass ||      // Override if set
+      item.class;                // Legacy field
+    
+    // Only calculate if no class provided at all
+    if (!freightClass) {
+      const density = this.calculateDensity(
+        item.weight,
+        item.length || 48,
+        item.width || 40,
+        item.height || 40
+      );
+      freightClass = this.getFreightClass(density);
+      console.log(`📊 Calculated density: ${density.toFixed(2)} lbs/ft³ → Class ${freightClass}`);
+    }
+
+    const quantity = parseInt(item.quantity) || 1;
+    const weightPerUnit = parseFloat(item.weight) || 0;
+    const totalWeight = Math.ceil(quantity * weightPerUnit);
+
+    const line = {
+      Weight: String(totalWeight),
+      Class: String(freightClass),
+      HandlingUnits: String(quantity),
+      HandlingUnitType: this.getHandlingUnitType(item),
+      HazMat: item.hazmat ? 'X' : ''
+    };
+
+    // Add NMFC if provided
+    if (item.nmfc) {
+      line.NMFC = String(item.nmfc);
+      if (item.nmfcSub) {
+        line.NMFCSub = String(item.nmfcSub);
       }
+    }
 
-      const line = {
-        Weight: String(Math.ceil(item.weight * (item.quantity || 1))),
-        Class: String(freightClass),
-        HandlingUnits: String(item.quantity || 1),
-        HandlingUnitType: this.getHandlingUnitType(item),
-        HazMat: item.hazmat ? 'X' : ''
-      };
+    // Add dimensions if provided and over 96 inches
+    if (item.length || item.height || item.width) {
+      line.CubeU = 'IN';
+      if (item.length) line.Length = String(Math.ceil(item.length));
+      if (item.height) line.Height = String(Math.ceil(item.height));
+      if (item.width) line.Width = String(Math.ceil(item.width));
+    }
 
-      // Add NMFC if provided
-      if (item.nmfc) {
-        line.NMFC = String(item.nmfc);
-        if (item.nmfcSub) {
-          line.NMFCSub = String(item.nmfcSub);
-        }
-      }
-
-      // Add dimensions if provided and over 96 inches
-      if (item.length || item.height || item.width) {
-        line.CubeU = 'IN';
-        if (item.length) line.Length = String(Math.ceil(item.length));
-        if (item.height) line.Height = String(Math.ceil(item.height));
-        if (item.width) line.Width = String(Math.ceil(item.width));
-      }
-
-      return line;
-    });
-  }
+    return line;
+  });
+}
 
   buildAccessorialCodes(accessorials) {
     const codes = [];
