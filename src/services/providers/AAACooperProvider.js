@@ -280,88 +280,98 @@ class AAACooperProvider extends BaseGroundProvider {
     return palletCount > 0 ? String(palletCount) : '';
   }
 
-  parseSoapResponse(response) {
-    // The response is wrapped in RateEstimateResponseVO
-    const data = response.RateEstimateResponseVO || response;
-    
-    // Check for errors
-    if (data.ErrorMessage) {
-      throw new Error(`AAA Cooper error: ${data.ErrorMessage}`);
-    }
-
-    // Check if the response was rated successfully
-    if (data.InformationCode !== 'RATED') {
-      console.warn('⚠️ AAA Cooper quote not rated:', data.InformationMessage);
-      if (!data.TotalCharges) {
-        return null;
-      }
-    }
-
-    // Parse the response lines to get charge breakdown
-    const responseLines = data.RateEstimateResponseLine || [];
-    let baseFreight = 0;
-    let fuelSurcharge = 0;
-    let accessorialTotal = 0;
-
-    responseLines.forEach(line => {
-      const charges = parseFloat(line.Charges || 0);
-      const accessorialCode = line.Accessorial || '';
-      
-      if (accessorialCode === 'M') {
-        // Minimum charge (base freight)
-        baseFreight = charges;
-      } else if (accessorialCode === 'FSC') {
-        // Fuel surcharge
-        fuelSurcharge = charges;
-      } else if (accessorialCode && accessorialCode !== 'M' && accessorialCode !== 'FSC') {
-        // Other accessorials
-        accessorialTotal += charges;
-      }
-    });
-
-    // If no breakdown, use total charges as base freight
-    if (baseFreight === 0 && fuelSurcharge === 0) {
-      baseFreight = parseFloat(data.TotalCharges || 0);
-    }
-
-    const totalCost = parseFloat(data.TotalCharges || 0);
-    const transitDays = parseInt(data.TotalTransit) || 3;
-    
-    console.log('💰 AAA Cooper Pricing:');
-    console.log(`   Estimate #: ${data.EstimateNumber}`);
-    console.log(`   Base Freight: $${baseFreight.toFixed(2)}`);
-    console.log(`   Fuel Surcharge: $${fuelSurcharge.toFixed(2)} (${data.FuelSurchargePercent}%)`);
-    console.log(`   Accessorials: $${accessorialTotal.toFixed(2)}`);
-    console.log(`   Total: $${totalCost.toFixed(2)}`);
-    console.log(`   Transit: ${transitDays} days`);
-    console.log(`   Origin Terminal: ${data.OriginTerminal} (${data.OriginTerminalPhone})`);
-    console.log(`   Dest Terminal: ${data.DestinTerminal} (${data.DestinTerminalPhone})`);
-
-    // Return in standardized format
-    return this.formatStandardResponse({
-      service: 'LTL Standard',
-      baseFreight: baseFreight,
-      fuelSurcharge: fuelSurcharge,
-      accessorialCharges: accessorialTotal,
-      totalCost: totalCost,
-      transitDays: transitDays,
-      guaranteed: false,
-      quoteId: data.EstimateNumber || `AAACT-${Date.now()}`,
-      validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      
-      // Additional AAA Cooper specific data
-      estimateNumber: data.EstimateNumber,
-      originTerminal: data.OriginTerminal,
-      originTerminalPhone: data.OriginTerminalPhone,
-      destinationTerminal: data.DestinTerminal,
-      destinationTerminalPhone: data.DestinTerminalPhone,
-      fuelSurchargePercent: data.FuelSurchargePercent,
-      density: data.Density,
-      discount: data.Discount,
-      minimumCharge: data.MinimumCharge,
-      tariff: data.Tariff
-    });
+parseSoapResponse(response) {
+  const data = response.RateEstimateResponseVO || response;
+  
+  if (data.ErrorMessage) {
+    throw new Error(`AAA Cooper error: ${data.ErrorMessage}`);
   }
+
+  if (data.InformationCode !== 'RATED') {
+    console.warn('⚠️ AAA Cooper quote not rated:', data.InformationMessage);
+    if (!data.TotalCharges) {
+      return null;
+    }
+  }
+
+  // Parse the response lines
+  const responseLines = data.RateEstimateResponseLine || [];
+  let baseFreight = 0;
+  let fuelSurcharge = 0;
+  let discountAmount = 0;
+  let accessorialTotal = 0;
+
+  responseLines.forEach(line => {
+    const charges = parseFloat(line.Charges || 0);
+    const accessorialCode = line.Accessorial || '';
+    
+    if (!accessorialCode || accessorialCode === 'M') {
+      // Base freight (either no code or 'M')
+      baseFreight = Math.max(baseFreight, Math.abs(charges));
+    } else if (accessorialCode === 'FSC') {
+      // Fuel surcharge
+      fuelSurcharge = charges;
+    } else if (accessorialCode === 'DISC') {
+      // Discount (negative value)
+      discountAmount = charges; // Keep negative
+    } else if (accessorialCode) {
+      // Other accessorials (not discount)
+      accessorialTotal += charges;
+    }
+  });
+
+  // CRITICAL: Use TotalCharges as authoritative
+  const totalCost = parseFloat(data.TotalCharges || 0);
+  
+  // If we couldn't identify base freight from lines, derive it
+  if (baseFreight === 0 && totalCost > 0) {
+    // Total = Base + Fuel + Accessorials + Discount
+    // Therefore: Base = Total - Fuel - Accessorials - Discount
+    baseFreight = totalCost - fuelSurcharge - accessorialTotal - discountAmount;
+    baseFreight = Math.max(0, baseFreight); // Ensure non-negative
+  }
+  
+  // Apply discount to base freight for display purposes
+  const netBaseFreight = Math.max(0, baseFreight + discountAmount);
+  
+  const transitDays = parseInt(data.TotalTransit) || 3;
+  
+  console.log('💰 AAA Cooper Pricing:');
+  console.log(`   Estimate #: ${data.EstimateNumber}`);
+  console.log(`   Base Freight: $${baseFreight.toFixed(2)}`);
+  console.log(`   Discount: $${discountAmount.toFixed(2)}`);
+  console.log(`   Net Base: $${netBaseFreight.toFixed(2)}`);
+  console.log(`   Fuel Surcharge: $${fuelSurcharge.toFixed(2)} (${data.FuelSurchargePercent}%)`);
+  console.log(`   Accessorials: $${accessorialTotal.toFixed(2)}`);
+  console.log(`   Total (from API): $${totalCost.toFixed(2)}`);
+  console.log(`   Transit: ${transitDays} days`);
+
+  // Return in standardized format - USE TOTALCHARGES!
+  return this.formatStandardResponse({
+    service: 'LTL Standard',
+    baseFreight: netBaseFreight,  // Base after discount
+    fuelSurcharge: fuelSurcharge,
+    accessorialCharges: accessorialTotal,
+    totalCost: totalCost,  // Use API's authoritative total
+    transitDays: transitDays,
+    guaranteed: false,
+    quoteId: data.EstimateNumber || `AAACT-${Date.now()}`,
+    validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    
+    // Additional AAA Cooper specific data
+    estimateNumber: data.EstimateNumber,
+    originTerminal: data.OriginTerminal,
+    originTerminalPhone: data.OriginTerminalPhone,
+    destinationTerminal: data.DestinTerminal,
+    destinationTerminalPhone: data.DestinTerminalPhone,
+    fuelSurchargePercent: data.FuelSurchargePercent,
+    discount: discountAmount,
+    grossFreight: baseFreight,  // Original before discount
+    density: data.Density,
+    minimumCharge: data.MinimumCharge,
+    tariff: data.Tariff
+  });
+}
 
   // Test method to validate the connection
   async testConnection() {
