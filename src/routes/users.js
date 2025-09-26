@@ -57,36 +57,35 @@ router.get('/me', auth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.post('/', auth, authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
   try {
-    const { email, password, name, role, company: companyName } = req.body;
+    const { email, password, name, role } = req.body;  // REMOVED company from here
     const requestingUser = req.user;
 
+    // Permission check
     const canCreate = PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(role);
     if (!canCreate && requestingUser.role !== 'system_admin') {
       return res.status(403).json({ error: 'Not authorized to create this user type' });
     }
 
-    // Partner assignment
-    let partnerId = requestingUser.partnerId;
+    // Partner assignment logic - FIXED
+    let partnerId = null;
 
-    if (requestingUser.role === 'system_admin' && companyName) {
-      let partner = await Partner.findOne({ companyName });
-      if (!partner) {
-        const partnerType =
-          ['partner_admin', 'partner_user'].includes(role) ? 'customer' :
-          ['vendor_admin', 'vendor_user'].includes(role) ? 'vendor' : 'foreign_partner';
-
-        partner = await Partner.create({
-          companyName,
-          companyCode: companyName.substring(0, 4).toUpperCase(),
-          type: partnerType,
-          country: 'USA',
-          phone: 'pending',
-          email,
-          status: 'approved'
-        });
-      }
-      partnerId = partner._id;
+    // CASE 1: Partner/vendor admins creating sub-users - inherit their partnerId
+    if (['partner_admin', 'vendor_admin'].includes(requestingUser.role)) {
+      partnerId = requestingUser.partnerId;
     }
+    // CASE 2: Conship employees don't need a partnerId
+    else if (role === 'conship_employee') {
+      partnerId = null;  // Conship employees don't belong to a partner
+    }
+    // CASE 3: System admin creating partner_user inherits from requesting user if they have a partnerId
+    else if (requestingUser.role === 'system_admin' && role === 'partner_user') {
+      // This shouldn't happen normally - partner_users should be created by partner_admins
+      return res.status(400).json({ 
+        error: 'Partner users should be created by their partner admin' 
+      });
+    }
+    // CASE 4: No automatic partner creation anymore
+    // Partners should be created separately through the partners endpoint
 
     const user = new User({
       email,
@@ -95,15 +94,21 @@ router.post('/', auth, authorize(['system_admin', 'conship_employee', 'partner_a
       role,
       partnerId,
       parentAccountId: role.includes('_user') ? requestingUser._id : null,
-      modules: PERMISSION_HIERARCHY[role]?.defaultModules || [],
+      modules: PERMISSION_HIERARCHY[role]?.defaultModules?.map(moduleId => ({
+        moduleId,
+        name: getModuleName(moduleId),
+        permissions: ['read', 'write'],
+        grantedBy: requestingUser._id,
+        grantedAt: new Date()
+      })) || [],
       active: true
     });
 
     await user.save();
-    await user.populate('partnerId');
-
-    if (role === 'partner_admin' && partnerId) {
-      await Partner.findByIdAndUpdate(partnerId, { primaryContactId: user._id });
+    
+    // Only populate partnerId if it exists
+    if (partnerId) {
+      await user.populate('partnerId');
     }
 
     const userObj = user.toObject();
