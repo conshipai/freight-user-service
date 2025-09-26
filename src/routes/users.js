@@ -154,34 +154,45 @@ router.get('/managed', auth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // Update user modules (auth + authorize) ✅
 // ─────────────────────────────────────────────────────────────
-router.put('/:userId/modules', auth, authorize(['system_admin', 'conship_employee', 'partner_admin', 'vendor_admin']), async (req, res) => {
+// Update user (including password reset)
+router.put('/:userId', auth, authorize(['system_admin', 'conship_employee', 'partner_admin']), async (req, res) => {
   try {
     const { userId } = req.params;
-    const { modules } = req.body;
+    const { email, name, role, active, password } = req.body;
     const requestingUser = req.user;
 
     const targetUser = await User.findById(userId);
     if (!targetUser) return res.status(404).json({ error: 'User not found' });
 
-    const canManage =
-      PERMISSION_HIERARCHY[requestingUser.role]?.canManage?.includes(targetUser.role) ||
+    // Permission check
+    const canManage = 
+      requestingUser.role === 'system_admin' ||
       targetUser.parentAccountId?.toString() === requestingUser._id.toString() ||
-      requestingUser.role === 'system_admin';
+      (requestingUser.partnerId && requestingUser.partnerId.toString() === targetUser.partnerId?.toString());
 
-    if (!canManage) return res.status(403).json({ error: 'Not authorized to modify this user' });
+    if (!canManage) {
+      return res.status(403).json({ error: 'Not authorized to modify this user' });
+    }
 
-    targetUser.modules = (modules || []).map(moduleId => ({
-      moduleId,
-      name: getModuleName(moduleId),
-      permissions: ['read', 'write'],
-      grantedBy: requestingUser._id,
-      grantedAt: new Date()
-    }));
+    // Update fields
+    if (email) targetUser.email = email;
+    if (name) targetUser.name = name;
+    if (role && requestingUser.role === 'system_admin') targetUser.role = role;
+    if (active !== undefined) targetUser.active = active;
+    
+    // Password reset (only for admins managing their sub-users)
+    if (password) {
+      targetUser.password = password; // Will be hashed by pre-save hook
+    }
 
     await targetUser.save();
-    res.json({ success: true, user: targetUser });
+    
+    const userObj = targetUser.toObject();
+    delete userObj.password;
+    
+    res.json({ success: true, user: userObj });
   } catch (error) {
-    console.error('PUT /:userId/modules error:', error);
+    console.error('PUT /:userId error:', error);
     res.status(400).json({ error: error.message });
   }
 });
