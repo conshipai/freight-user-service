@@ -201,29 +201,45 @@ class GlobalTranzProvider extends BaseGroundProvider {
       // 2) Use LtlAmount as the final total (don’t recompute)
       const totalCost = parseFloat(quote.LtlAmount || 0);
 
-      // Charges breakdown: keep discount negative
-      let baseFreight = 0;
-      let fuelSurcharge = 0;
-      let discount = 0;
-      let accessorialTotal = 0;
+     // Charges breakdown: keep discount negative
+let baseFreight = 0;
+let fuelSurcharge = 0;
+let discount = 0;
+let accessorialTotal = 0;
 
-      if (quote.Charges && Array.isArray(quote.Charges)) {
-        quote.Charges.forEach(charge => {
-          const amount = parseFloat(charge.Charge || 0);
-          const name = (charge.Name || '').toLowerCase();
-          
-          if (name.includes('initial') || name.includes('cost') || name.includes('base')) {
-            baseFreight = amount;
-          } else if (name.includes('fuel')) {
-            fuelSurcharge = amount;
-          } else if (name.includes('discount')) {
-            discount = amount; // keep negative for math
-          } else {
-            accessorialTotal += amount;
-          }
-        });
-      }
+// Carrier info (move this up here so we have carrierName)
+const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
+const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
 
+console.log(`\n📊 Pricing for ${carrierName}:`);
+
+// Log quote-level fields ONCE, outside the loop
+console.log(`   LtlAmount (Total): $${quote.LtlAmount}`);
+console.log(`   LtlGrossCharge: $${quote.LtlGrossCharge}`);
+console.log(`   LtlNetCharge: $${quote.LtlNetCharge}`);
+console.log(`   LtlDiscountAmount: $${quote.LtlDiscountAmount}`);
+console.log(`   LtlDiscountPercent: ${quote.LtlDiscountPercent}%`);
+
+// Now log individual charges
+if (quote.Charges && Array.isArray(quote.Charges)) {
+  console.log(`   Charges breakdown:`);
+  quote.Charges.forEach(charge => {
+    console.log(`     - ${charge.Name}: $${charge.Charge} (Type: ${charge.Type || 'N/A'})`);
+    
+    const amount = parseFloat(charge.Charge || 0);
+    const name = (charge.Name || '').toLowerCase();
+    
+    if (name.includes('initial') || name.includes('cost') || name.includes('base')) {
+      baseFreight = amount;
+    } else if (name.includes('fuel')) {
+      fuelSurcharge = amount;
+    } else if (name.includes('discount')) {
+      discount = amount; // keep negative for math
+    } else {
+      accessorialTotal += amount;
+    }
+  });
+}
       // Helpful derived metric (not used for total)
       const netFreight = (Number.isFinite(baseFreight) ? baseFreight : 0) + (Number.isFinite(discount) ? discount : 0);
 
