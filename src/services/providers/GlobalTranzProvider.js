@@ -238,6 +238,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
       return this.formatStandardResponse({
         provider: `GLOBALTRANZ_${carrierCode}`,
+        carrier: carrierName, 
         carrierName,
         carrierCode,
         service: quote.LtlServiceTypeName || 'LTL Standard',
