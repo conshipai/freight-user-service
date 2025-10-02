@@ -63,21 +63,19 @@ class GlobalTranzProvider extends BaseGroundProvider {
       try {
         const response = await this.client.post(fullUrl, gtzRequest);
         console.log('✅ GlobalTranz API call successful');
-        return this.parseResponse(response.data, requestData);
+        
+        // parseResponse now returns an array of rates
+        const rates = this.parseResponse(response.data, requestData);
+        return rates; // Return the array of rates
+        
       } catch (error) {
         // Handle 422 error (no carriers found)
         if (error.response && error.response.status === 422) {
           console.log('⚠️ GlobalTranz: No carriers available for this route');
           console.log('   Response:', error.response.data);
           
-          // Return a "no rates" response
-          return {
-            provider: this.name,
-            success: false,
-            error: 'No carriers available for this route',
-            message: error.response.data || 'We were unable to find a carrier to provide a quote.',
-            rates: []
-          };
+          // Return empty array for no carriers
+          return [];
         }
         
         throw error;
@@ -88,7 +86,9 @@ class GlobalTranzProvider extends BaseGroundProvider {
       if (error.response) {
         console.error('   Status:', error.response.status);
       }
-      return this.logError(error, 'getRates');
+      
+      // Return empty array on error
+      return [];
     }
   }
 
@@ -220,12 +220,12 @@ class GlobalTranzProvider extends BaseGroundProvider {
     
     if (quotes.length === 0) {
       console.log('⚠️ No quotes in response');
-      return null;
+      return [];
     }
 
-    console.log(`💰 Found ${quotes.length} carrier quotes`);
+    console.log(`💰 Found ${quotes.length} carrier quotes via GlobalTranz`);
 
-    // Parse all quotes
+    // Parse ALL quotes and return them as individual rates
     const results = quotes.map(quote => {
       // Extract carrier info
       const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
@@ -261,9 +261,14 @@ class GlobalTranzProvider extends BaseGroundProvider {
       const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || 3);
       const deliveryDate = quote.EstimatedDeliveryDate || quote.LtlDeliveryDate;
       
+      // Extract carrier performance
+      const onTimePercentage = parseFloat(quote.CarrierDetail?.CarrierOnTimeforCustomer || -1);
+      
       console.log(`  • ${carrierName}: $${totalCost.toFixed(2)} (${transitDays} days)`);
 
-      return {
+      // Return formatted rate for this specific carrier
+      return this.formatStandardResponse({
+        provider: `GLOBALTRANZ_${carrierCode}`, // Unique identifier
         carrierName: carrierName,
         carrierCode: carrierCode,
         service: quote.LtlServiceTypeName || 'LTL Standard',
@@ -274,29 +279,34 @@ class GlobalTranzProvider extends BaseGroundProvider {
         totalCost: totalCost,
         transitDays: transitDays,
         guaranteed: quote.GuaranteedRate ? true : false,
-        quoteId: quote.QuoteId || `GTZ-${Date.now()}`,
+        quoteId: quote.QuoteId || `GTZ-${carrierCode}-${Date.now()}`,
         validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
         deliveryDate: deliveryDate,
-        // Include carrier performance metrics
-        carrierOnTime: quote.CarrierDetail?.CarrierOnTimeforCustomer || 'N/A',
-        // Include any special messages
-        customMessage: quote.CustomMessage || null
-      };
+        // Add GlobalTranz-specific metadata
+        brokerName: 'GlobalTranz',
+        isBrokered: true,
+        carrierOnTime: onTimePercentage > 0 ? `${onTimePercentage.toFixed(1)}%` : 'N/A',
+        customMessage: quote.CustomMessage || null,
+        // Include pricing breakdown for transparency
+        priceBreakdown: {
+          baseFreight: baseFreight,
+          discount: discount,
+          fuelSurcharge: fuelSurcharge,
+          accessorials: accessorialTotal,
+          total: totalCost
+        }
+      });
     });
 
-    // Sort by price to find the best rate
+    // Sort by price for display purposes
     results.sort((a, b) => a.totalCost - b.totalCost);
     
-    console.log(`\n✅ Best quote: ${results[0].carrierName} at $${results[0].totalCost.toFixed(2)}`);
+    console.log(`\n✅ Returning ${results.length} carrier rates via GlobalTranz`);
+    console.log(`   Best rate: ${results[0].carrierName} at $${results[0].totalCost.toFixed(2)}`);
+    console.log(`   Highest rate: ${results[results.length-1].carrierName} at $${results[results.length-1].totalCost.toFixed(2)}`);
     
-    // Return the best (cheapest) quote using the standard format
-    return this.formatStandardResponse({
-      ...results[0],
-      provider: this.name,
-      carrier: results[0].carrierName,
-      // You could also return all quotes if needed:
-      // allQuotes: results
-    });
+    // Return ALL rates as an array
+    return results;
   }
 }
 
