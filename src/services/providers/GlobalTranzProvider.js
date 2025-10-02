@@ -37,9 +37,9 @@ class GlobalTranzProvider extends BaseGroundProvider {
       baseURL: this.baseUrl,
       timeout: 30000,
       headers: {
-        'accept': 'application/json',
+        accept: 'application/json',
         'Content-Type': 'application/json',
-        'Authorization': `Basic ${this.authToken}`
+        Authorization: `Basic ${this.authToken}`
       }
     });
   }
@@ -157,25 +157,25 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
     // Build the request object matching the working API specification
     const request = {
-      CustomerId: "012345", // Test customer ID from docs
+      CustomerId: '012345', // Test customer ID from docs
       GuaranteedRates: false,
       PickupDate: formattedDate,
       Stackable: isStackable,
       TerminalPickup: false,
       ShipmentNew: false,
       Origin: {
-        Street: requestData.origin?.address || "123 abc street",
-        City: requestData.origin?.city || "Phoenix",
-        State: requestData.origin?.state || "AZ",
-        Zip: requestData.origin?.zipCode || "85008",
-        Country: "USA"
+        Street: requestData.origin?.address || '123 abc street',
+        City: requestData.origin?.city || 'Phoenix',
+        State: requestData.origin?.state || 'AZ',
+        Zip: requestData.origin?.zipCode || '85008',
+        Country: 'USA'
       },
       Destination: {
-        Street: requestData.destination?.address || "321 xyz street",
-        City: requestData.destination?.city || "Navasota",
-        State: requestData.destination?.state || "TX",
-        Zip: requestData.destination?.zipCode || "77868",
-        Country: "USA"
+        Street: requestData.destination?.address || '321 xyz street',
+        City: requestData.destination?.city || 'Navasota',
+        State: requestData.destination?.state || 'TX',
+        Zip: requestData.destination?.zipCode || '77868',
+        Country: 'USA'
       },
       Items: items,
       Accessorials: accessorials
@@ -196,29 +196,31 @@ class GlobalTranzProvider extends BaseGroundProvider {
   getPackageType(unitType) {
     // Map unit types to GlobalTranz package types
     const packageTypes = {
-      'Pallets': 0,
-      'Bags': 2,
-      'Bales': 3,
-      'Boxes': 4,
-      'Bundles': 16,
-      'Crates': 8,
-      'Drums': 10,
-      'Loose': 15,
-      'Pieces': 0,
-      'Rolls': 13,
-      'Totes': 17
+      Pallets: 0,
+      Bags: 2,
+      Bales: 3,
+      Boxes: 4,
+      Bundles: 16,
+      Crates: 8,
+      Drums: 10,
+      Loose: 15,
+      Pieces: 0,
+      Rolls: 13,
+      Totes: 17
     };
     
     return packageTypes[unitType] || 0; // Default to pallets
   }
 
+  // === REPLACED FUNCTION STARTS HERE ===
   parseResponse(response, requestData) {
     console.log('📦 Parsing GlobalTranz response...');
-      console.log('📥 RAW GlobalTranz response:', JSON.stringify(response, null, 2));
-    // Handle both array and single object responses
-    const quotes = Array.isArray(response) ? response : [response];
+    console.log('📥 RAW GlobalTranz response has', (Array.isArray(response) ? response.length : 0), 'quotes');
     
-    if (quotes.length === 0) {
+    // Response is already an array
+    const quotes = response;
+    
+    if (!quotes || quotes.length === 0) {
       console.log('⚠️ No quotes in response');
       return [];
     }
@@ -227,14 +229,14 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
     // Parse ALL quotes and return them as individual rates
     const results = quotes.map(quote => {
-      // Extract carrier info
+      // Extract carrier info - structure is different than expected
       const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
       const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
       
-      // Extract the main price - LtlAmount is the total
+      // Extract the main price - LtlAmount is a string that needs parsing
       const totalCost = parseFloat(quote.LtlAmount || 0);
       
-      // Extract charges breakdown if available
+      // Extract charges breakdown
       let baseFreight = 0;
       let fuelSurcharge = 0;
       let discount = 0;
@@ -245,30 +247,25 @@ class GlobalTranzProvider extends BaseGroundProvider {
           const amount = parseFloat(charge.Charge || 0);
           const name = (charge.Name || '').toLowerCase();
           
-          if (name.includes('initial') || name.includes('base') || name.includes('cost')) {
+          if (name.includes('initial') || name.includes('cost')) {
             baseFreight = amount;
           } else if (name.includes('fuel')) {
             fuelSurcharge = amount;
           } else if (name.includes('discount')) {
-            discount = amount; // Note: discount is negative
-          } else {
+            discount = Math.abs(amount); // Make positive for display
+          } else if (name.includes('metro') || charge.AccessorialID > 10) {
             accessorialTotal += amount;
           }
         });
       }
       
-      // Extract transit time
-      const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || 3);
-      const deliveryDate = quote.EstimatedDeliveryDate || quote.LtlDeliveryDate;
+      // Extract transit time - it's a string
+      const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || '3');
       
-      // Extract carrier performance
-      const onTimePercentage = parseFloat(quote.CarrierDetail?.CarrierOnTimeforCustomer || -1);
-      
-      console.log(`  • ${carrierName}: $${totalCost.toFixed(2)} (${transitDays} days)`);
+      console.log(`  • ${carrierName}: $${isNaN(totalCost) ? '0.00' : totalCost.toFixed(2)} (${isNaN(transitDays) ? '3' : transitDays} days)`);
 
-      // Return formatted rate for this specific carrier
       return this.formatStandardResponse({
-        provider: `GLOBALTRANZ_${carrierCode}`, // Unique identifier
+        provider: `GLOBALTRANZ_${carrierCode}`,
         carrierName: carrierName,
         carrierCode: carrierCode,
         service: quote.LtlServiceTypeName || 'LTL Standard',
@@ -276,38 +273,32 @@ class GlobalTranzProvider extends BaseGroundProvider {
         discount: discount,
         fuelSurcharge: fuelSurcharge,
         accessorialCharges: accessorialTotal,
-        totalCost: totalCost,
-        transitDays: transitDays,
-        guaranteed: quote.GuaranteedRate ? true : false,
+        totalCost: isNaN(totalCost) ? 0 : totalCost,
+        transitDays: isNaN(transitDays) ? 3 : transitDays,
+        guaranteed: false,
         quoteId: quote.QuoteId || `GTZ-${carrierCode}-${Date.now()}`,
-        validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        deliveryDate: deliveryDate,
+        validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        deliveryDate: quote.EstimatedDeliveryDate || quote.LtlDeliveryDate,
         // Add GlobalTranz-specific metadata
         brokerName: 'GlobalTranz',
         isBrokered: true,
-        carrierOnTime: onTimePercentage > 0 ? `${onTimePercentage.toFixed(1)}%` : 'N/A',
-        customMessage: quote.CustomMessage || null,
-        // Include pricing breakdown for transparency
-        priceBreakdown: {
-          baseFreight: baseFreight,
-          discount: discount,
-          fuelSurcharge: fuelSurcharge,
-          accessorials: accessorialTotal,
-          total: totalCost
-        }
+        carrierOnTime: quote.CarrierDetail?.CarrierOnTimeforCustomer || 'N/A',
+        customMessage: quote.CustomMessage || null
       });
     });
 
-    // Sort by price for display purposes
+    // Sort by price
     results.sort((a, b) => a.totalCost - b.totalCost);
     
     console.log(`\n✅ Returning ${results.length} carrier rates via GlobalTranz`);
-    console.log(`   Best rate: ${results[0].carrierName} at $${results[0].totalCost.toFixed(2)}`);
-    console.log(`   Highest rate: ${results[results.length-1].carrierName} at $${results[results.length-1].totalCost.toFixed(2)}`);
+    if (results.length > 0) {
+      console.log(`   Best rate: ${results[0].carrierName} at $${results[0].totalCost.toFixed(2)}`);
+      console.log(`   Highest rate: ${results[results.length - 1].carrierName} at $${results[results.length - 1].totalCost.toFixed(2)}`);
+    }
     
-    // Return ALL rates as an array
     return results;
   }
+  // === REPLACED FUNCTION ENDS HERE ===
 }
 
 module.exports = GlobalTranzProvider;
