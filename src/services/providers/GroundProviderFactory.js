@@ -120,16 +120,24 @@ class GroundProviderFactory {
           if (provider) {
             try {
               console.log(`🔄 Getting rates from customer's ${account.carrier} account`);
-              const rate = await provider.getRates(requestData);
+              const result = await provider.getRates(requestData);
               
-              if (rate) {
-                allRates.push({
-                  ...rate,
-                  accountType: 'customer',
-                  accountId: account._id,
-                  accountName: account.accountName || `Your ${account.carrier} Account`,
-                  requiresMarkup: false  // Customer accounts don't get markup
+              // Handle both single rates and arrays of rates
+              const rates = Array.isArray(result) ? result : (result ? [result] : []);
+              
+              if (rates.length > 0) {
+                // Add account info to each rate
+                rates.forEach(rate => {
+                  allRates.push({
+                    ...rate,
+                    accountType: 'customer',
+                    accountId: account._id,
+                    accountName: account.accountName || `Your ${account.carrier} Account`,
+                    requiresMarkup: false  // Customer accounts don't get markup
+                  });
                 });
+                
+                console.log(`✅ Customer ${account.carrier} returned ${rates.length} rate(s)`);
                 
                 // Update usage stats
                 account.quoteCount = (account.quoteCount || 0) + 1;
@@ -153,16 +161,23 @@ class GroundProviderFactory {
 
     for (const provider of companyProviders) {
       try {
-        const rate = await provider.getRates(requestData);
+        const result = await provider.getRates(requestData);
         
-        if (rate) {
-          allRates.push({
-            ...rate,
-            accountType: 'company',
-            accountName: `${provider.name} (Our Rates)`,
-            requiresMarkup: true  // Company accounts get markup
+        // Handle both single rates and arrays of rates
+        const rates = Array.isArray(result) ? result : (result ? [result] : []);
+        
+        if (rates.length > 0) {
+          // Add account info to each rate
+          rates.forEach(rate => {
+            allRates.push({
+              ...rate,
+              accountType: 'company',
+              accountName: `${rate.carrierName || provider.name} (Our Rates)`,
+              requiresMarkup: true  // Company accounts get markup
+            });
           });
-          console.log(`✅ ${provider.code} returned company rate`);
+          
+          console.log(`✅ ${provider.code} returned ${rates.length} company rate(s)`);
         }
       } catch (error) {
         console.error(`❌ Company ${provider.code} failed:`, error.message);
