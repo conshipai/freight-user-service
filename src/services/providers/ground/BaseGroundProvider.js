@@ -41,19 +41,55 @@ class BaseGroundProvider {
 
   // Standard format all providers should return
   formatStandardResponse(carrierData) {
+    // FIX: Ensure both carrier and carrierName fields are populated
+    const carrier = carrierData.carrier || carrierData.carrierName || carrierData.provider || this.name;
+    const carrierName = carrierData.carrierName || carrierData.carrier || carrierData.provider || this.name;
+    
     return {
-      provider: this.code,
-      carrierName: this.name,
-      service: carrierData.service,
-      baseFreight: carrierData.baseFreight,
-      fuelSurcharge: carrierData.fuelSurcharge,
-      accessorialCharges: carrierData.accessorialCharges || 0,
-      totalCost: carrierData.baseFreight + carrierData.fuelSurcharge + (carrierData.accessorialCharges || 0),
-      transitDays: carrierData.transitDays,
+      provider: carrierData.provider || this.code,
+      
+      // BOTH fields for compatibility with frontend
+      carrier: carrier,           // Frontend might look for this
+      carrierName: carrierName,   // Or this
+      carrierCode: carrierData.carrierCode || '',
+      
+      // Broker info if applicable
+      brokerName: carrierData.brokerName || null,
+      isBrokered: carrierData.isBrokered || !!carrierData.brokerName || false,
+      
+      service: carrierData.service || 'LTL Standard',
+      
+      // Pricing
+      baseFreight: this.sanitizeNumber(carrierData.baseFreight),
+      discount: this.sanitizeNumber(carrierData.discount),
+      fuelSurcharge: this.sanitizeNumber(carrierData.fuelSurcharge),
+      accessorialCharges: this.sanitizeNumber(carrierData.accessorialCharges || carrierData.accessorials || 0),
+      totalCost: this.sanitizeNumber(carrierData.totalCost || carrierData.total || 
+                 (carrierData.baseFreight + carrierData.fuelSurcharge + (carrierData.accessorialCharges || 0))),
+      
+      // Price breakdown for tooltips
+      priceBreakdown: carrierData.priceBreakdown || null,
+      
+      // Transit info
+      transitDays: carrierData.transitDays || carrierData.transit_days || 0,
       guaranteed: carrierData.guaranteed || false,
-      quoteId: carrierData.quoteId,
-      validUntil: carrierData.validUntil || new Date(Date.now() + 24 * 60 * 60 * 1000)
+      
+      // Quote metadata
+      quoteId: carrierData.quoteId || `${this.code}-${Date.now()}`,
+      validUntil: carrierData.validUntil || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      
+      // Additional fields that might be used
+      deliveryDate: carrierData.deliveryDate || carrierData.estimatedDeliveryDate || null,
+      notes: carrierData.notes || carrierData.customMessage || null,
+      carrierOnTime: carrierData.carrierOnTime || carrierData.carrierOnTimePercentage || null
     };
+  }
+
+  // Sanitize number values to prevent NaN/undefined
+  sanitizeNumber(value) {
+    if (value === null || value === undefined) return 0;
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : 0;
   }
 
   // Log errors consistently
