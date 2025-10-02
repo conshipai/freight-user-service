@@ -245,11 +245,6 @@ if (quote.Charges && Array.isArray(quote.Charges)) {
 
       // Transit
       const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || '3', 10) || 3;
-
-      // Carrier info
-      const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
-      const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
-
       console.log(`  • ${carrierName}: $${Number.isFinite(totalCost) ? totalCost.toFixed(2) : '0.00'} (${transitDays} days)`);
 
       return this.formatStandardResponse({
