@@ -1,12 +1,14 @@
 // src/services/providers/ground/STGProvider.js
 const BaseGroundProvider = require('./BaseGroundProvider');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 class STGProvider extends BaseGroundProvider {
   constructor() {
     super('STG Logistics', 'STG');
 
-    // Support both naming styles (you've used both across the project/messages)
+    // Support both naming styles
     this.baseUrl =
       process.env.FREIGHT_FORCE_BASE_URL ||
       process.env.FREIGHTFORCE_API_URL ||
@@ -27,14 +29,29 @@ class STGProvider extends BaseGroundProvider {
     this.token = null;
     this.tokenExpiry = null;
 
-    // Single axios instance so we can set headers cleanly
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
     });
   }
 
-  // --- Utilities -------------------------------------------------------------
+  // Helper to save API responses for debugging
+  saveDebugLog(filename, data) {
+    try {
+      const debugDir = path.join(process.cwd(), 'debug_logs');
+      if (!fs.existsSync(debugDir)) {
+        fs.mkdirSync(debugDir, { recursive: true });
+      }
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filepath = path.join(debugDir, `${filename}_${timestamp}.json`);
+      
+      fs.writeFileSync(filepath, JSON.stringify(data, null, 2));
+      console.log(`📝 Debug log saved: ${filepath}`);
+    } catch (error) {
+      console.log('Could not save debug log:', error.message);
+    }
+  }
 
   static pickFirst(obj, keys, fallback = undefined) {
     for (const k of keys) {
@@ -53,43 +70,76 @@ class STGProvider extends BaseGroundProvider {
     return !this.tokenExpiry || new Date() >= this.tokenExpiry;
   }
 
-  // --- Auth -----------------------------------------------------------------
-
   async authenticate() {
-    // Avoid log noise if creds are missing (provider can be optional)
     if (!this.username || !this.password) {
       throw new Error('Missing FREIGHT FORCE credentials');
     }
 
     try {
-      console.log('🔐 STG/FreightForce: Authenticating…');
+      console.log('\n🔐 STG/FreightForce: Authenticating…');
+      console.log('   Username:', this.username);
+      console.log('   Email:', this.email);
+      console.log('   Base URL:', this.baseUrl);
 
-      const { data } = await this.http.post('/api/Auth/token', {
+      const authPayload = {
         username: this.username,
         password: this.password,
         contactEmail: this.email,
+      };
+
+      console.log('   Auth Payload (without password):', { 
+        username: authPayload.username, 
+        contactEmail: authPayload.contactEmail 
       });
 
-      // Try a bunch of common token keys
+      const { data } = await this.http.post('/api/Auth/token', authPayload);
+
+      console.log('\n📥 AUTH RESPONSE:');
+      console.log(JSON.stringify(data, null, 2));
+
+      this.saveDebugLog('stg_auth_response', {
+        timestamp: new Date().toISOString(),
+        request: { username: this.username, email: this.email },
+        response: data
+      });
+
+      // Try various token field names
       const token = STGProvider.pickFirst(
         data,
         ['token', 'access_token', 'jwt', 'accessToken', 'Token', 'bearer', 'bearerToken']
       );
 
       if (!token) {
-        console.error('⚠️ Token response payload:', data);
+        console.error('⚠️ Could not find token in response. All fields:', Object.keys(data));
         throw new Error('Could not find token in Auth/token response');
       }
 
       this.token = token;
-      this.tokenExpiry = new Date(Date.now() + 55 * 60 * 1000); // ~55 mins safety
+      this.tokenExpiry = new Date(Date.now() + 55 * 60 * 1000);
       this._setAuthHeader(this.token);
 
-      console.log('✅ STG/FreightForce: Authenticated');
+      console.log('✅ STG/FreightForce: Authenticated successfully');
+      console.log('   Token (first 20 chars):', token.substring(0, 20) + '...');
+      console.log('   Token expires at:', this.tokenExpiry.toISOString());
+
       return this.token;
     } catch (err) {
-      const detail = err.response?.data || err.message;
-      console.error('❌ STG/FreightForce Auth failed:', detail);
+      console.error('\n❌ STG/FreightForce Auth Error:');
+      console.error('   Error Message:', err.message);
+      if (err.response) {
+        console.error('   Response Status:', err.response.status);
+        console.error('   Response Data:', err.response.data);
+      }
+      
+      this.saveDebugLog('stg_auth_error', {
+        timestamp: new Date().toISOString(),
+        error: {
+          message: err.message,
+          status: err.response?.status,
+          data: err.response?.data
+        }
+      });
+      
       throw err;
     }
   }
@@ -102,39 +152,189 @@ class STGProvider extends BaseGroundProvider {
     }
   }
 
-  // --- Public API ------------------------------------------------------------
-
   async getRates(requestData) {
     try {
-      // Skip if no creds configured
+      console.log('\n' + '='.repeat(80));
+      console.log('🚚 STG/FREIGHTFORCE API CALL STARTING');
+      console.log('='.repeat(80));
+      console.log('📅 Timestamp:', new Date().toISOString());
+      console.log('🔗 Base URL:', this.baseUrl);
+
       if (!this.username || !this.password) {
         console.warn('⚠️ STG/FreightForce: Missing credentials, skipping');
         return null;
       }
 
-      // Ensure we’re authenticated
       await this.ensureAuth();
 
       const payload = this.buildRequest(requestData);
-      console.log('📤 STG/FreightForce request:', JSON.stringify(payload, null, 2));
+      
+      console.log('\n📤 STG REQUEST PAYLOAD:');
+      console.log(JSON.stringify(payload, null, 2));
+
+      this.saveDebugLog('stg_request', {
+        timestamp: new Date().toISOString(),
+        request: payload,
+        originalRequest: requestData
+      });
+
+      const startTime = Date.now();
+      console.log(`\n🌐 Calling: POST ${this.baseUrl}/api/Quote`);
 
       const { data } = await this.http.post('/api/Quote', payload, {
         headers: { 'Content-Type': 'application/json' },
       });
 
-      console.log('📥 STG/FreightForce raw response:', JSON.stringify(data, null, 2));
+      const responseTime = Date.now() - startTime;
+      
+      console.log(`\n✅ STG RESPONSE RECEIVED (${responseTime}ms)`);
+      console.log('\n📥 FULL RAW RESPONSE:');
+      console.log(JSON.stringify(data, null, 2));
 
-      return this.parseResponse(data);
+      this.saveDebugLog('stg_response', {
+        timestamp: new Date().toISOString(),
+        responseTime: responseTime,
+        data: data
+      });
+
+      // Analyze response structure
+      console.log('\n🔍 RESPONSE ANALYSIS:');
+      console.log('  Response Type:', typeof data);
+      console.log('  Is Array:', Array.isArray(data));
+      console.log('  Top-level keys:', Object.keys(data));
+      
+      // Log all fields for discovery
+      console.log('\n📌 ALL RESPONSE FIELDS:');
+      Object.keys(data).forEach(key => {
+        const value = data[key];
+        if (typeof value === 'object' && value !== null) {
+          console.log(`  ${key}:`, JSON.stringify(value, null, 2));
+        } else {
+          console.log(`  ${key}:`, value);
+        }
+      });
+
+      // Look for quote-specific fields
+      console.log('\n📋 QUOTE IDENTIFICATION:');
+      console.log('  quoteId:', data.quoteId || 'Not provided');
+      console.log('  quoteNumber:', data.quoteNumber || 'Not provided');
+      console.log('  reference:', data.reference || 'Not provided');
+      console.log('  id:', data.id || 'Not provided');
+      
+      if (data.quote) {
+        console.log('  quote.number:', data.quote.number || 'Not provided');
+        console.log('  quote.id:', data.quote.id || 'Not provided');
+      }
+
+      // Look for service level fields
+      console.log('\n🎯 SERVICE LEVEL:');
+      console.log('  serviceType:', data.serviceType || 'Not provided');
+      console.log('  serviceName:', data.serviceName || 'Not provided');
+      console.log('  serviceLevel:', data.serviceLevel || 'Not provided');
+      console.log('  guaranteed:', data.guaranteed || 'Not provided');
+      console.log('  expedited:', data.expedited || 'Not provided');
+      console.log('  priority:', data.priority || 'Not provided');
+
+      // Look for transit time fields
+      console.log('\n📅 TRANSIT & DELIVERY:');
+      console.log('  transitTime:', data.transitTime || 'Not provided');
+      console.log('  transitDays:', data.transitDays || 'Not provided');
+      console.log('  etaDays:', data.etaDays || 'Not provided');
+      console.log('  estimatedDelivery:', data.estimatedDelivery || 'Not provided');
+      console.log('  deliveryDate:', data.deliveryDate || 'Not provided');
+      console.log('  committedDelivery:', data.committedDelivery || 'Not provided');
+
+      // Look for pricing fields
+      console.log('\n💵 PRICING FIELDS:');
+      console.log('  quoteRateTotal:', data.quoteRateTotal || 'Not provided');
+      console.log('  total:', data.total || 'Not provided');
+      console.log('  grandTotal:', data.grandTotal || 'Not provided');
+      console.log('  totalRate:', data.totalRate || 'Not provided');
+      console.log('  amount:', data.amount || 'Not provided');
+
+      // Look for freight charge breakdown
+      console.log('\n📊 FREIGHT CHARGES:');
+      console.log('  pickup_FreightCharge:', data.pickup_FreightCharge || 'Not provided');
+      console.log('  pickupFreight:', data.pickupFreight || 'Not provided');
+      console.log('  delivery_FreightCharge:', data.delivery_FreightCharge || 'Not provided');
+      console.log('  deliveryFreight:', data.deliveryFreight || 'Not provided');
+      console.log('  freight_Charge:', data.freight_Charge || 'Not provided');
+      console.log('  linehaul:', data.linehaul || 'Not provided');
+
+      // Look for fuel surcharge
+      console.log('\n⛽ FUEL SURCHARGES:');
+      console.log('  pickup_FSC:', data.pickup_FSC || 'Not provided');
+      console.log('  pickupFuel:', data.pickupFuel || 'Not provided');
+      console.log('  delivery_FSC:', data.delivery_FSC || 'Not provided');
+      console.log('  deliveryFuel:', data.deliveryFuel || 'Not provided');
+      console.log('  freight_FSC:', data.freight_FSC || 'Not provided');
+      console.log('  fuelSurcharge:', data.fuelSurcharge || 'Not provided');
+
+      // Look for accessorials
+      console.log('\n🔧 ACCESSORIALS:');
+      console.log('  accessorialTotal:', data.accessorialTotal || 'Not provided');
+      console.log('  accessorialsTotal:', data.accessorialsTotal || 'Not provided');
+      
+      if (data.accessorials) {
+        console.log('  accessorials array:');
+        if (Array.isArray(data.accessorials)) {
+          data.accessorials.forEach((acc, index) => {
+            console.log(`    Accessorial #${index + 1}:`, JSON.stringify(acc, null, 2));
+          });
+        } else {
+          console.log('    ', JSON.stringify(data.accessorials, null, 2));
+        }
+      }
+
+      if (data.deliveryAccessorials) {
+        console.log('  deliveryAccessorials:', JSON.stringify(data.deliveryAccessorials, null, 2));
+      }
+      
+      if (data.pickupAccessorials) {
+        console.log('  pickupAccessorials:', JSON.stringify(data.pickupAccessorials, null, 2));
+      }
+
+      const result = this.parseResponse(data);
+
+      console.log('\n📦 NORMALIZED RESULT:');
+      console.log(JSON.stringify(result, null, 2));
+
+      console.log('\n' + '='.repeat(80));
+      console.log('✅ STG PROCESSING COMPLETE');
+      console.log('='.repeat(80) + '\n');
+
+      return result;
+
     } catch (err) {
-      console.error('❌ STG/FreightForce error:', err.response?.data || err.message);
+      const errorTime = Date.now();
+      console.error('\n💥 STG/FreightForce ERROR:');
+      console.error('   Error Message:', err.message);
+      
+      if (err.response) {
+        console.error('   Response Status:', err.response.status);
+        console.error('   Response Data:', JSON.stringify(err.response.data, null, 2));
+        
+        this.saveDebugLog('stg_error', {
+          timestamp: new Date().toISOString(),
+          error: {
+            message: err.message,
+            status: err.response.status,
+            data: err.response.data
+          }
+        });
+      } else {
+        console.error('   Stack:', err.stack);
+      }
+      
+      console.log('='.repeat(80) + '\n');
       return null;
     }
   }
 
-  // --- Request builder -------------------------------------------------------
-
   buildRequest(requestData) {
-    // Defensive pulls for your internal shape (seen across your UI flows)
+    console.log('\n🔨 Building STG Request:');
+    
+    // Extract addresses
     const originZip =
       requestData?.origin?.zipCode ||
       requestData?.originZip ||
@@ -149,7 +349,10 @@ class STGProvider extends BaseGroundProvider {
       requestData?.formData?.destination?.zipCode ||
       '';
 
-    // Commodities: expect { quantity, weight, length, width, height, description }
+    console.log('   Origin ZIP:', originZip);
+    console.log('   Destination ZIP:', destZip);
+
+    // Extract commodities
     const commodities = Array.isArray(requestData?.commodities)
       ? requestData.commodities
       : Array.isArray(requestData?.ltlDetails?.commodities)
@@ -158,7 +361,9 @@ class STGProvider extends BaseGroundProvider {
       ? requestData.formData.commodities
       : [];
 
-    // Total weight (rounded up to integer)
+    console.log('   Number of commodities:', commodities.length);
+
+    // Calculate total weight
     const totalWeight = Math.max(
       1,
       Math.ceil(
@@ -170,16 +375,19 @@ class STGProvider extends BaseGroundProvider {
       )
     );
 
-    // Build dimensions array; skip if fields are missing to avoid 400s
+    console.log('   Total weight:', totalWeight, 'lbs');
+
+    // Build dimensions array
     const dimensions = commodities
-      .map((c) => {
+      .map((c, index) => {
         const qty = Number(c.quantity ?? 1);
         const wt = Number(c.weight ?? 0);
         const L = Number(c.length ?? 0);
         const W = Number(c.width ?? 0);
         const H = Number(c.height ?? 0);
 
-        // Include only if we have legit L/W/H/weight
+        console.log(`   Commodity #${index + 1}: ${qty}x ${L}"L x ${W}"W x ${H}"H @ ${wt}lbs`);
+
         if (qty > 0 && wt > 0 && L > 0 && W > 0 && H > 0) {
           return {
             qty: qty,
@@ -194,14 +402,13 @@ class STGProvider extends BaseGroundProvider {
       })
       .filter(Boolean);
 
-    // Accessorials mapping – pass through codes if you already have API codes,
-    // otherwise map your booleans to likely codes. Adjust as needed after you
-    // hit /api/Accessorials/{zip} to confirm available codes.
+    // Process accessorials
     const acc = requestData?.accessorials || requestData?.formData?.accessorials || {};
     const pickupAccessorials = [];
     const deliveryAccessorials = [];
 
-    // If your UI sends known codes already, allow direct pass-through:
+    console.log('\n   Accessorials requested:', Object.keys(acc).filter(k => acc[k]));
+
     if (Array.isArray(acc.pickupCodes)) {
       acc.pickupCodes.forEach((code) => pickupAccessorials.push({ code: String(code) }));
     }
@@ -209,7 +416,7 @@ class STGProvider extends BaseGroundProvider {
       acc.deliveryCodes.forEach((code) => deliveryAccessorials.push({ code: String(code) }));
     }
 
-    // Map common flags → example codes (validate with Accessorials endpoint per ZIP)
+    // Map common flags
     if (acc.liftgatePickup) pickupAccessorials.push({ code: 'LFT' });
     if (acc.appointmentPickup) pickupAccessorials.push({ code: 'APT' });
     if (acc.insidePickup) pickupAccessorials.push({ code: 'INS' });
@@ -219,9 +426,11 @@ class STGProvider extends BaseGroundProvider {
     if (acc.appointmentDelivery) deliveryAccessorials.push({ code: 'APT' });
     if (acc.insideDelivery) deliveryAccessorials.push({ code: 'INS' });
 
-    // Only include arrays if they’re non-empty
+    console.log('   Pickup accessorials:', pickupAccessorials);
+    console.log('   Delivery accessorials:', deliveryAccessorials);
+
     const body = {
-      rateType: 'N',               // Nationwide LTL
+      rateType: 'N',
       origin: String(originZip),
       originType: 'Z',
       destination: String(destZip),
@@ -236,80 +445,101 @@ class STGProvider extends BaseGroundProvider {
     return body;
   }
 
-  // --- Response parser -------------------------------------------------------
+  parseResponse(data) {
+    console.log('\n📊 PARSING STG RESPONSE');
+    
+    const pickFirst = (obj, keys, fallback = 0) => {
+      for (const k of keys) {
+        if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
+          console.log(`   Found ${k}:`, obj[k]);
+          return obj[k];
+        }
+      }
+      return fallback;
+    };
+    
+    const num = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
 
-parseResponse(data) {
-  // small helpers so this works even if pickFirst isn’t defined elsewhere
-  const pickFirst = (obj, keys, fallback = 0) => {
-    for (const k of keys) {
-      if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] != null) {
-        return obj[k];
+    // Calculate freight components
+    const pickupFreight   = num(pickFirst(data, ['pickup_FreightCharge', 'pickupFreight', 'pickup_freight', 'pickupFreightCharge'], 0));
+    const deliveryFreight = num(pickFirst(data, ['delivery_FreightCharge','deliveryFreight','delivery_freight','deliveryFreightCharge'], 0));
+    const lineFreight     = num(pickFirst(data, ['freight_Charge','linehaul','freight','lineFreight'], 0));
+    const baseFreight     = pickupFreight + deliveryFreight + lineFreight;
+
+    // Calculate fuel components
+    const pickupFuel      = num(pickFirst(data, ['pickup_FSC','pickupFuel','pickup_fuel','pickupFuelSurcharge'], 0));
+    const deliveryFuel    = num(pickFirst(data, ['delivery_FSC','deliveryFuel','delivery_fuel','deliveryFuelSurcharge'], 0));
+    const lineFuel        = num(pickFirst(data, ['freight_FSC','fuelSurcharge','fuel','fsc','lineFuel'], 0));
+    const fuelSurcharge   = pickupFuel + deliveryFuel + lineFuel;
+
+    // Calculate accessorials
+    let accessorials = num(pickFirst(data, ['accessorialTotal','accessorialsTotal','accessorial_amount'], 0));
+    if (!accessorials) {
+      const accList = pickFirst(data, ['accessorials', 'deliveryAccessorials', 'pickupAccessorials'], []);
+      if (Array.isArray(accList)) {
+        accessorials = accList.reduce((sum, a) => {
+          const amt = num(a?.amount ?? a?.charge ?? a?.total);
+          return sum + amt;
+        }, 0);
       }
     }
-    return fallback;
-  };
-  const num = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  };
 
-  // --- Freight components (pickup + linehaul + delivery)
-  const pickupFreight   = num(pickFirst(data, ['pickup_FreightCharge', 'pickupFreight', 'pickup_freight', 'pickupFreightCharge'], 0));
-  const deliveryFreight = num(pickFirst(data, ['delivery_FreightCharge','deliveryFreight','delivery_freight','deliveryFreightCharge'], 0));
-  const lineFreight     = num(pickFirst(data, ['freight_Charge','linehaul','freight','lineFreight'], 0));
-  const baseFreight     = pickupFreight + deliveryFreight + lineFreight;
-
-  // --- Fuel components
-  const pickupFuel      = num(pickFirst(data, ['pickup_FSC','pickupFuel','pickup_fuel','pickupFuelSurcharge'], 0));
-  const deliveryFuel    = num(pickFirst(data, ['delivery_FSC','deliveryFuel','delivery_fuel','deliveryFuelSurcharge'], 0));
-  const lineFuel        = num(pickFirst(data, ['freight_FSC','fuelSurcharge','fuel','fsc','lineFuel'], 0));
-  const fuelSurcharge   = pickupFuel + deliveryFuel + lineFuel;
-
-  // --- Accessorials
-  let accessorials = num(pickFirst(data, ['accessorialTotal','accessorialsTotal','accessorial_amount'], 0));
-  if (!accessorials) {
-    const accList = pickFirst(data, ['accessorials', 'deliveryAccessorials', 'pickupAccessorials'], []);
-    if (Array.isArray(accList)) {
-      accessorials = accList.reduce((sum, a) => {
-        const amt = num(a?.amount ?? a?.charge ?? a?.total);
-        return sum + amt;
-      }, 0);
+    // Calculate total
+    let total = num(pickFirst(data, ['quoteRateTotal', 'total', 'grandTotal', 'totalRate', 'amount'], 0));
+    if (!total) {
+      total = baseFreight + fuelSurcharge + accessorials;
     }
+
+    // Extract metadata
+    const transitDays = parseInt(pickFirst(data, ['transitTime', 'transitDays', 'etaDays'], 3), 10) || 3;
+    
+    // QUOTE NUMBER - from API or generate fallback
+    const quoteId = pickFirst(data, ['quoteId', 'quoteNumber', 'reference', 'id'], undefined)
+                 || pickFirst(data?.quote || {}, ['number', 'id'], undefined)
+                 || `STG-${Date.now()}`;
+    
+    console.log('\n💡 Quote ID source:', quoteId.startsWith('STG-') ? 'Generated fallback' : 'From API');
+
+    // Extract service level
+    const serviceName = pickFirst(data, ['serviceType', 'serviceName', 'serviceLevel'], 'Standard LTL');
+    const isGuaranteed = data.guaranteed === true || data.guaranteed === 'Y';
+
+    // Price breakdown
+    console.log('\n🔍 STG Price Breakdown:');
+    console.log('   Pickup:       $' + (pickupFreight + pickupFuel).toFixed(2));
+    console.log('   Linehaul:     $' + (lineFreight + lineFuel).toFixed(2));
+    console.log('   Delivery:     $' + (deliveryFreight + deliveryFuel).toFixed(2));
+    console.log('   Accessorials: $' + accessorials.toFixed(2));
+    console.log('   Total:        $' + total.toFixed(2));
+
+    return this.formatStandardResponse({
+      service: serviceName,
+      baseFreight,
+      fuelSurcharge,
+      accessorialCharges: accessorials,
+      total,
+      totalCost: total,
+      transitDays,
+      guaranteed: isGuaranteed,
+      quoteId,
+      validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      deliveryDate: pickFirst(data, ['estimatedDelivery', 'deliveryDate', 'committedDelivery'], null),
+      
+      // Store raw response for debugging  
+      rawResponse: data,
+      
+      priceBreakdown: {
+        baseFreight,
+        discount: 0,
+        fuelSurcharge,
+        accessorials,
+        total
+      }
+    });
   }
-
-  // --- Total (prefer API’s grand total)
-  let total = num(pickFirst(data, ['quoteRateTotal', 'total', 'grandTotal', 'totalRate', 'amount'], 0));
-  if (!total) {
-    total = baseFreight + fuelSurcharge + accessorials;
-  }
-
-  // --- Transit / Quote Id
-  const transitDays = parseInt(pickFirst(data, ['transitTime', 'transitDays', 'etaDays'], 3), 10) || 3;
-  const quoteId = pickFirst(data, ['quoteId', 'quoteNumber', 'reference', 'id'], undefined)
-               || pickFirst(data?.quote || {}, ['number', 'id'], undefined);
-
-  // Debug breakdown
-  console.log('🔍 STG Price Breakdown:');
-  console.log('   Pickup:       $' + (pickupFreight + pickupFuel).toFixed(2));
-  console.log('   Linehaul:     $' + (lineFreight   + lineFuel).toFixed(2));
-  console.log('   Delivery:     $' + (deliveryFreight + deliveryFuel).toFixed(2));
-  console.log('   Accessorials: $' + accessorials.toFixed(2));
-  console.log('   Total:        $' + total.toFixed(2));
-
-  // Return normalized result
-  return this.formatStandardResponse({
-    service: 'Standard LTL',
-    baseFreight,                    // pickup + line + delivery (freight only)
-    fuelSurcharge,                  // pickup + line + delivery (fuel only)
-    accessorialCharges: accessorials,
-    total,                          // keep both keys for downstream compatibility
-    totalCost: total,
-    transitDays,
-    guaranteed: false,
-    quoteId,
-    validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    raw: data,
-  });
 }
-}
+
 module.exports = STGProvider;
