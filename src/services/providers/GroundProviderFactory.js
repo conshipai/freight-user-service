@@ -174,7 +174,7 @@ class GroundProviderFactory {
     return allRates;
   }
 
-  // Original method for backward compatibility
+  // Updated method to handle both single rates and arrays of rates
   async getRatesFromAll(requestData, specificCarriers = null) {
     const providers = specificCarriers 
       ? specificCarriers.map(code => this.getProvider(code)).filter(p => p)
@@ -186,23 +186,29 @@ class GroundProviderFactory {
     const promises = providers.map(provider => 
       provider.getRates(requestData)
         .then(result => {
-          if (result) {
-            console.log(`✅ ${provider.code} returned rate`);
+          // Handle both single rates and arrays of rates
+          if (Array.isArray(result)) {
+            console.log(`✅ ${provider.code} returned ${result.length} rates`);
+            return result;
+          } else if (result) {
+            console.log(`✅ ${provider.code} returned 1 rate`);
+            return [result]; // Wrap single rate in array
           } else {
             console.log(`⚠️ ${provider.code} returned no rate`);
+            return [];
           }
-          return result;
         })
         .catch(error => {
           console.error(`❌ ${provider.code} failed:`, error.message);
-          return null;
+          return [];
         })
     );
 
     const results = await Promise.all(promises);
-    const validRates = results.filter(rate => rate !== null);
+    // Flatten the array of arrays
+    const validRates = results.flat().filter(rate => rate !== null);
     
-    console.log(`📊 Got ${validRates.length} valid rates out of ${providers.length} carriers`);
+    console.log(`📊 Got ${validRates.length} valid rates total`);
     return validRates;
   }
 }
