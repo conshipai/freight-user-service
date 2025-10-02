@@ -6,14 +6,10 @@ class GlobalTranzProvider extends BaseGroundProvider {
   constructor() {
     super('GlobalTranz', 'GLOBALTRANZ');
     
-    // Use dev environment that works with the test credentials
     this.baseUrl = process.env.GLOBALTRANZ_API_URL || 'https://dev.gtzintegrate.com';
     this.subscriptionKey = process.env.GLOBALTRANZ_SUBSCRIPTION_KEY || 'bcc0ec4997814c74a854f9a738a58cbd';
-    
-    // The authorization token from the working curl (already base64 encoded)
     this.authToken = process.env.GLOBALTRANZ_AUTH_TOKEN || 'YXBpdGVzdGluZzpBZ2VudCU5OTk5';
     
-    // Accessorial code mappings from API documentation
     this.accessorialCodes = {
       liftgatePickup: 11,
       liftgateDelivery: 12,
@@ -32,7 +28,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       appointmentDelivery: 153
     };
     
-    // Create axios instance
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -50,23 +45,17 @@ class GlobalTranzProvider extends BaseGroundProvider {
       console.log('   Base URL:', this.baseUrl);
       console.log('   Subscription Key:', this.subscriptionKey ? '***' + this.subscriptionKey.slice(-4) : 'Not set');
 
-      // Build the request in GlobalTranz format
       const gtzRequest = this.buildRequest(requestData);
       console.log('📤 GlobalTranz request:', JSON.stringify(gtzRequest, null, 2));
 
-      // Use the correct endpoint from the working curl
       const endpoint = '/rate/ltl/v2';
       const fullUrl = `${endpoint}?subscription-key=${this.subscriptionKey}`;
-      
       console.log(`🔍 Calling endpoint: ${this.baseUrl}${fullUrl}`);
       
       try {
         const response = await this.client.post(fullUrl, gtzRequest);
         console.log('✅ GlobalTranz API call successful');
-        
-        const rates = this.parseResponse(response.data, requestData);
-        return rates;
-        
+        return this.parseResponse(response.data, requestData);
       } catch (error) {
         if (error.response && error.response.status === 422) {
           console.log('⚠️ GlobalTranz: No carriers available for this route');
@@ -75,18 +64,14 @@ class GlobalTranzProvider extends BaseGroundProvider {
         }
         throw error;
       }
-      
     } catch (error) {
       console.error('❌ GlobalTranz error:', error.response?.data || error.message);
-      if (error.response) {
-        console.error('   Status:', error.response.status);
-      }
+      if (error.response) console.error('   Status:', error.response.status);
       return [];
     }
   }
 
   buildRequest(requestData) {
-    // Format date as MM/DD/YYYY
     const pickupDate = requestData.pickupDate 
       ? new Date(requestData.pickupDate) 
       : new Date(Date.now() + 86400000); // Tomorrow
@@ -96,7 +81,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
     const year = pickupDate.getFullYear();
     const formattedDate = `${month}/${day}/${year}`;
 
-    // Build items array in GlobalTranz format
     const items = (requestData.commodities || []).map(item => {
       const quantity = parseInt(item.quantity || 1);
       const weight = Math.ceil(item.weight || 0);
@@ -105,7 +89,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
         PieceCount: quantity,
         PalletCount: item.unitType === 'Pallets' ? quantity : 0,
         Weight: weight,
-        WeightType: 1, // 1 = Pounds
+        WeightType: 1,
         ProductClass: parseFloat(item.freightClass || item.nmfcClass || item.calculatedClass || '50'),
         Description: item.description || 'General Freight',
         PackageType: this.getPackageType(item.unitType),
@@ -122,10 +106,8 @@ class GlobalTranzProvider extends BaseGroundProvider {
       return gtzItem;
     });
 
-    // Build accessorials array
     const accessorials = [];
     const acc = requestData.accessorials || {};
-    
     if (acc.liftgatePickup) accessorials.push(this.accessorialCodes.liftgatePickup);
     if (acc.liftgateDelivery) accessorials.push(this.accessorialCodes.liftgateDelivery);
     if (acc.residentialPickup) accessorials.push(this.accessorialCodes.residentialPickup);
@@ -140,7 +122,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
     const isStackable = items.some(i => i.Stackable);
 
     const request = {
-      CustomerId: '012345', // Test customer ID from docs
+      CustomerId: '012345',
       GuaranteedRates: false,
       PickupDate: formattedDate,
       Stackable: isStackable,
@@ -184,104 +166,73 @@ class GlobalTranzProvider extends BaseGroundProvider {
       Rolls: 13,
       Totes: 17
     };
-    return packageTypes[unitType] || 0; // Default to pallets
+    return packageTypes[unitType] || 0;
   }
 
-  // ===================== UPDATED FUNCTION =====================
+  // ==== UPDATED PER YOUR NOTES ====
   parseResponse(response, requestData) {
     console.log('📦 Parsing GlobalTranz response...');
-    console.log('📥 RAW response type:', typeof response, ' | isArray:', Array.isArray(response));
-    try {
-      const preview = JSON.stringify(response, null, 2);
-      console.log('📥 Response preview:', preview.length > 1000 ? preview.slice(0, 1000) + '…' : preview);
-    } catch (_) {
-      console.log('📥 Response preview: [unserializable]');
+    
+    // 1) Unwrap RateResults → array, or accept array directly
+    let quotes;
+    if (response && Array.isArray(response.RateResults)) {
+      quotes = response.RateResults;
+    } else if (response && response.RateResults && typeof response.RateResults === 'object') {
+      // Sometimes a single object can appear here
+      quotes = [response.RateResults];
+    } else if (Array.isArray(response)) {
+      quotes = response;
+    } else {
+      console.log('⚠️ Unexpected response structure');
+      try {
+        console.log('   Preview:', JSON.stringify(response, null, 2).slice(0, 800));
+      } catch (_) {}
+      return [];
     }
 
-    // Normalize various possible response shapes into an array of quote objects
-    const normalizeToQuoteArray = (resp) => {
-      if (!resp) return [];
-
-      if (Array.isArray(resp)) return resp;
-
-      // Common wrappers that might hold the quotes array
-      const candidates = [
-        resp.quotes,
-        resp.Quotes,
-        resp.data,
-        resp.Data,
-        resp.results,
-        resp.Results,
-        resp.ltlRates,
-        resp.LtlRates,
-        resp.LtlRateList,
-        resp.Rates,
-        resp.rateResults,
-        resp.RateResults
-      ].filter(Boolean);
-
-      for (const c of candidates) {
-        if (Array.isArray(c)) return c;
-      }
-
-      // Some APIs return a single quote object
-      if (typeof resp === 'object' && (resp.LtlAmount || resp.CarrierDetail)) {
-        return [resp];
-      }
-
-      return [];
-    };
-
-    const quotes = normalizeToQuoteArray(response);
-
-    if (!Array.isArray(quotes) || quotes.length === 0) {
-      console.log('⚠️ No quotes found after normalization');
+    if (!quotes || quotes.length === 0) {
+      console.log('⚠️ No quotes in response');
       return [];
     }
 
     console.log(`💰 Found ${quotes.length} carrier quotes via GlobalTranz`);
 
     const results = quotes.map(quote => {
-      // Carrier info
-      const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
-      const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
+      // 2) Use LtlAmount as the final total (don’t recompute)
+      const totalCost = parseFloat(quote.LtlAmount || 0);
 
-      // Total cost (string -> number) with fallbacks
-      const totalCost = parseFloat(
-        quote.LtlAmount ?? quote.Total ?? quote.TotalPrice ?? quote.Amount ?? 0
-      );
-
-      // Charges breakdown
+      // Charges breakdown: keep discount negative
       let baseFreight = 0;
       let fuelSurcharge = 0;
-      let discount = 0; // keep negative if provided negative
-
+      let discount = 0;
       let accessorialTotal = 0;
 
-      if (Array.isArray(quote.Charges)) {
+      if (quote.Charges && Array.isArray(quote.Charges)) {
         quote.Charges.forEach(charge => {
-          const amount = parseFloat(charge.Charge ?? charge.Amount ?? 0);
+          const amount = parseFloat(charge.Charge || 0);
           const name = (charge.Name || '').toLowerCase();
-
-          if (name.includes('initial') || name.includes('base') || name.includes('cost')) {
+          
+          if (name.includes('initial') || name.includes('cost') || name.includes('base')) {
             baseFreight = amount;
           } else if (name.includes('fuel')) {
             fuelSurcharge = amount;
           } else if (name.includes('discount')) {
-            discount = amount; // negative stays negative for math
-          } else if (name.includes('metro') || (charge.AccessorialID ?? 0) > 10) {
+            discount = amount; // keep negative for math
+          } else {
             accessorialTotal += amount;
           }
         });
       }
 
-      // Net freight math (base + discount where discount may be negative)
+      // Helpful derived metric (not used for total)
       const netFreight = (Number.isFinite(baseFreight) ? baseFreight : 0) + (Number.isFinite(discount) ? discount : 0);
 
-      // Transit days
-      const transitDaysRaw = quote.LtlServiceDays ?? quote.CalendarDays ?? '3';
-      const transitDaysParsed = parseInt(String(transitDaysRaw), 10);
-      const transitDays = Number.isFinite(transitDaysParsed) ? transitDaysParsed : 3;
+      // Transit
+      const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || '3', 10) || 3;
+
+      // Carrier info
+      const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
+      const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
 
       console.log(`  • ${carrierName}: $${Number.isFinite(totalCost) ? totalCost.toFixed(2) : '0.00'} (${transitDays} days)`);
 
@@ -291,9 +242,8 @@ class GlobalTranzProvider extends BaseGroundProvider {
         carrierCode,
         service: quote.LtlServiceTypeName || 'LTL Standard',
 
-        // expose gross/discount/net distinctly
         baseFreight,
-        discount,                 // negative values reduce the base
+        discount,                 // negative if a discount applies
         fuelSurcharge,
         accessorialCharges: accessorialTotal,
         totalCost: Number.isFinite(totalCost) ? totalCost : 0,
@@ -304,17 +254,16 @@ class GlobalTranzProvider extends BaseGroundProvider {
         validUntil: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         deliveryDate: quote.EstimatedDeliveryDate || quote.LtlDeliveryDate,
 
-        // Meta
         brokerName: 'GlobalTranz',
         isBrokered: true,
         carrierOnTime: quote.CarrierDetail?.CarrierOnTimeforCustomer || 'N/A',
         customMessage: quote.CustomMessage || null,
 
-        // Helpful breakdown for UI/debug
+        // For your tooltip/diagnostics
         priceBreakdown: {
           baseFreight,
-          discount,       // negative
-          netFreight,     // base + discount
+          discount,        // negative
+          netFreight,      // base + discount
           fuelSurcharge,
           accessorials: accessorialTotal,
           total: Number.isFinite(totalCost) ? totalCost : 0
@@ -322,9 +271,9 @@ class GlobalTranzProvider extends BaseGroundProvider {
       });
     });
 
-    // Sort by price then filter invalid/zero totals
+    // 3) Sort + filter zero/invalid totals
     results.sort((a, b) => (a.totalCost ?? 0) - (b.totalCost ?? 0));
-    const validResults = results.filter(rate => Number.isFinite(rate.totalCost) && rate.totalCost > 0);
+    const validResults = results.filter(r => Number.isFinite(r.totalCost) && r.totalCost > 0);
 
     console.log(`\n✅ Returning ${validResults.length} valid carrier rates via GlobalTranz`);
     if (validResults.length > 0) {
@@ -334,7 +283,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
     return validResults;
   }
-  // ============================================================
+  // ================================
 }
 
 module.exports = GlobalTranzProvider;
