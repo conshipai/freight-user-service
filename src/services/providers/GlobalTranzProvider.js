@@ -7,23 +7,27 @@ class GlobalTranzProvider extends BaseGroundProvider {
     super('GlobalTranz', 'GLOBALTRANZ');
     
     this.baseUrl = process.env.GLOBALTRANZ_API_URL || 'https://api.gtzintegrate.com';
-    this.accessKey = process.env.GLOBALTRANZ_ACCESS_KEY;
-    this.username = process.env.GLOBALTRANZ_USERNAME;
-    this.password = process.env.GLOBALTRANZ_PASSWORD;
+    this.accessKey = process.env.GLOBALTRANZ_ACCESS_KEY || 'bcc0ec4997814c74a854f9a738a58cbd';
+    this.username = process.env.GLOBALTRANZ_USERNAME || 'apitesting';
+    this.password = process.env.GLOBALTRANZ_PASSWORD || 'Agent%9999';
     
-    // Accessorial code mappings for GlobalTranz
+    // Accessorial code mappings from API documentation
     this.accessorialCodes = {
-      liftgatePickup: 12,
-      liftgateDelivery: 13,
-      residentialPickup: 14,
-      residentialDelivery: 15,
-      insidePickup: 16,
-      insideDelivery: 17,
-      limitedAccessPickup: 18,
-      limitedAccessDelivery: 19,
-      appointmentPickup: 20,
-      appointmentDelivery: 21,
-      protectFromFreeze: 22
+      liftgatePickup: 11,
+      liftgateDelivery: 12,
+      residentialPickup: 13,
+      residentialDelivery: 14,
+      insideDelivery: 15,
+      notifyPriorToArrival: 17,
+      notificationPickup: 103,
+      notificationDelivery: 104,
+      insidePickup: 105,
+      sortAndSegregate: 108,
+      protectFromFreeze: 116,
+      limitedAccessPickup: 138,
+      limitedAccessDelivery: 139,
+      appointmentPickup: 152,
+      appointmentDelivery: 153
     };
     
     // Create axios instance with basic auth
@@ -39,31 +43,58 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
   async getRates(requestData) {
     try {
-      if (!this.accessKey || !this.username || !this.password) {
-        console.warn('⚠️ GlobalTranz: Missing credentials, skipping');
-        return null;
-      }
-
       console.log('🚚 GlobalTranz: Fetching rates...');
+      console.log('   Base URL:', this.baseUrl);
+      console.log('   Access Key:', this.accessKey);
 
       // Build the request in GlobalTranz format
       const gtzRequest = this.buildRequest(requestData);
       console.log('📤 GlobalTranz request:', JSON.stringify(gtzRequest, null, 2));
 
-      // Call the API - the endpoint should include the accessKey as a query param
-      const response = await this.client.post(`/api/rate/v2?accessKey=${this.accessKey}`, gtzRequest);
+      // Try different endpoint variations
+      const endpoints = [
+        '/RateV2',           // Most likely based on docs
+        '/api/RateV2',
+        '/api/rate/v2',
+        '/Rate',             
+        '/api/Rate'
+      ];
+
+      let response = null;
+      let lastError = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          const fullUrl = `${endpoint}?accessKey=${this.accessKey}`;
+          console.log(`🔍 Trying endpoint: ${fullUrl}`);
+          
+          response = await this.client.post(fullUrl, gtzRequest);
+          console.log(`✅ Success with endpoint: ${endpoint}`);
+          break;
+        } catch (err) {
+          lastError = err;
+          console.log(`❌ Failed ${endpoint}: ${err.response?.status || err.message}`);
+          
+          // Log non-404 errors as they might give us clues
+          if (err.response && err.response.status !== 404) {
+            console.log('Response data:', JSON.stringify(err.response.data, null, 2));
+          }
+        }
+      }
+
+      if (!response) {
+        console.error('❌ All endpoints failed.');
+        if (lastError?.response?.data) {
+          console.error('Last error details:', JSON.stringify(lastError.response.data, null, 2));
+        }
+        throw lastError || new Error('No endpoints worked');
+      }
 
       console.log('📥 GlobalTranz response received');
-
-      // Parse and return the best rate
       return this.parseResponse(response.data, requestData);
       
     } catch (error) {
-      console.error('❌ GlobalTranz error:', error.response?.data || error.message);
-      if (error.response) {
-        console.error('Response status:', error.response.status);
-        console.error('Response URL:', error.config?.url);
-      }
+      console.error('❌ GlobalTranz final error:', error.response?.data || error.message);
       return this.logError(error, 'getRates');
     }
   }
@@ -85,23 +116,26 @@ class GlobalTranzProvider extends BaseGroundProvider {
       const weight = Math.ceil(item.weight || 0);
       
       return {
+        // Required fields
         PieceCount: quantity,
         PalletCount: item.unitType === 'Pallets' ? quantity : 0,
-        Length: Math.ceil(item.length || 48),
-        Width: Math.ceil(item.width || 40),
-        Height: Math.ceil(item.height || 0),
         Weight: weight,
-        WeightType: 1, // 1 = per piece, 0 = total
-        ProductClass: parseInt(item.freightClass || item.nmfcClass || item.calculatedClass || '50'),
-        LinearFeet: 0, // Calculate if needed
-        NmfcNumber: item.nmfc || '',
+        WeightType: 1, // 1 = Pounds, 0 = Kilograms
+        ProductClass: parseFloat(item.freightClass || item.nmfcClass || item.calculatedClass || '50'),
         Description: item.description || 'General Freight',
         PackageType: this.getPackageType(item.unitType),
         Hazmat: item.hazmat || false,
-        HazmatClass: item.hazmat ? 10 : null,
-        PackingGroupNumber: '',
-        UnPoNumber: '',
-        Stackable: item.stackable !== false
+        Stackable: item.stackable !== false,
+        
+        // Optional fields
+        Length: item.length ? Math.ceil(item.length) : null,
+        Width: item.width ? Math.ceil(item.width) : null,
+        Height: item.height ? Math.ceil(item.height) : null,
+        LinearFeet: null,
+        NmfcNumber: item.nmfc || null,
+        HazmatClass: item.hazmat ? 30 : null, // 30 = Flammable Liquid (default hazmat class)
+        PackingGroupNumber: null,
+        UnPoNumber: null
       };
     });
 
@@ -117,55 +151,88 @@ class GlobalTranzProvider extends BaseGroundProvider {
     if (acc.insideDelivery) accessorials.push(this.accessorialCodes.insideDelivery);
     if (acc.limitedAccessPickup) accessorials.push(this.accessorialCodes.limitedAccessPickup);
     if (acc.limitedAccessDelivery) accessorials.push(this.accessorialCodes.limitedAccessDelivery);
+    if (acc.appointmentPickup) accessorials.push(this.accessorialCodes.appointmentPickup);
+    if (acc.appointmentDelivery) accessorials.push(this.accessorialCodes.appointmentDelivery);
 
-    // Build the request object in GlobalTranz format
-    return {
-      CustomerId: process.env.GLOBALTRANZ_CUSTOMER_ID || "012345",
-      GuaranteedRates: false,
+    // Check if shipment is stackable (any item can be stacked)
+    const isStackable = items.some(i => i.Stackable);
+
+    // Build the request object matching the exact API specification
+    const request = {
+      // Required fields
+      CustomerId: "012345", // Test customer ID from docs
       PickupDate: formattedDate,
-      ExtremeLength: null,
-      ExtremeLengthBundleCount: null,
-      Stackable: items.some(i => i.Stackable),
+      Stackable: isStackable,
       TerminalPickup: false,
-      ContactName: requestData.contactName || "Shipping Department",
-      ValueOfGoods: null,
-      ShipmentNew: true,
+      ShipmentNew: false, // Used goods by default
       Origin: {
-        Street: requestData.origin?.address || "",
-        City: requestData.origin?.city || "",
-        State: requestData.origin?.state || "",
         Zip: requestData.origin?.zipCode || "",
-        Country: "USA"
+        Country: "USA",
+        // Optional origin fields
+        Street: requestData.origin?.address || null,
+        City: requestData.origin?.city || null,
+        State: requestData.origin?.state || null
       },
       Destination: {
-        Street: requestData.destination?.address || "",
-        City: requestData.destination?.city || "",
-        State: requestData.destination?.state || "",
         Zip: requestData.destination?.zipCode || "",
-        Country: "USA"
+        Country: "USA",
+        // Optional destination fields
+        Street: requestData.destination?.address || null,
+        City: requestData.destination?.city || null,
+        State: requestData.destination?.state || null
       },
       Items: items,
-      Accessorials: accessorials
+      
+      // Optional fields
+      GuaranteedRates: false,
+      ExtremeLength: null,
+      ExtremeLengthBundleCount: null,
+      ContactName: requestData.contactName || null,
+      ValueOfGoods: null,
+      Accessorials: accessorials.length > 0 ? accessorials : null
     };
+
+    // Remove null fields to clean up the request
+    Object.keys(request).forEach(key => {
+      if (request[key] === null) {
+        delete request[key];
+      }
+    });
+
+    return request;
   }
 
   getPackageType(unitType) {
-    // Map unit types to GlobalTranz package types
-    // You may need to adjust these based on their API documentation
+    // Map unit types to GlobalTranz package types based on API docs
     const packageTypes = {
-      'Pallets': 0,
-      'Boxes': 1,
-      'Crates': 2,
-      'Bundles': 3,
-      'Rolls': 4,
-      'Bags': 5,
-      'Drums': 6,
-      'Totes': 7
+      'Pallets': 0,        // Std Pallets
+      'NonStdPallets': 1,  // Pallets - Non Std
+      'Bags': 2,
+      'Bales': 3,
+      'Boxes': 4,
+      'Bunches': 5,
+      'Carpets': 6,
+      'Coils': 7,
+      'Crates': 8,
+      'Cylinders': 9,
+      'Drums': 10,
+      'Pails': 11,
+      'Reels': 12,
+      'Rolls': 13,
+      'Tubes': 14,
+      'Pipes': 14,
+      'Loose': 15,
+      'Bundles': 16,
+      'Totes': 17,
+      'Tote': 17
     };
-    return packageTypes[unitType] || 0;
+    
+    return packageTypes[unitType] !== undefined ? packageTypes[unitType] : 0; // Default to standard pallets
   }
 
   parseResponse(response, requestData) {
+    console.log('📦 GlobalTranz raw response:', JSON.stringify(response, null, 2));
+    
     // GlobalTranz response might have different structures
     let quotes = [];
     
@@ -174,8 +241,12 @@ class GlobalTranzProvider extends BaseGroundProvider {
       quotes = response.Quotes;
     } else if (response?.quotes) {
       quotes = response.quotes;
+    } else if (response?.Results) {
+      quotes = response.Results;
+    } else if (response?.results) {
+      quotes = response.results;
     } else if (response?.data) {
-      quotes = response.data;
+      quotes = Array.isArray(response.data) ? response.data : [response.data];
     } else if (Array.isArray(response)) {
       quotes = response;
     } else if (response && typeof response === 'object') {
@@ -185,36 +256,15 @@ class GlobalTranzProvider extends BaseGroundProvider {
     
     if (quotes.length === 0) {
       console.log('⚠️ GlobalTranz: No quotes in response');
-      console.log('Response structure:', JSON.stringify(response, null, 2));
       return null;
     }
 
     // Find the best quote (cheapest)
-    const bestQuote = quotes.reduce((best, current) => {
-      const currentTotal = parseFloat(
-        current.TotalAmount || 
-        current.totalAmount || 
-        current.Total || 
-        current.total || 
-        current.TotalCharge ||
-        current.totalCharge ||
-        0
-      );
-      const bestTotal = parseFloat(
-        best.TotalAmount || 
-        best.totalAmount || 
-        best.Total || 
-        best.total || 
-        best.TotalCharge ||
-        best.totalCharge ||
-        999999
-      );
-      return currentTotal < bestTotal ? current : best;
-    });
-
+    const bestQuote = quotes[0]; // For now, take the first one
+    
     console.log(`💰 GlobalTranz: Found ${quotes.length} quotes`);
 
-    // Parse the pricing - handle PascalCase and camelCase
+    // Parse the pricing - try various field names
     const baseFreight = parseFloat(
       bestQuote.FreightCharge || 
       bestQuote.freightCharge ||
@@ -222,8 +272,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       bestQuote.linehaul || 
       bestQuote.BaseRate ||
       bestQuote.baseRate ||
-      bestQuote.Freight ||
-      bestQuote.freight ||
       0
     );
     
@@ -232,10 +280,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       bestQuote.fuelCharge ||
       bestQuote.FuelSurcharge ||
       bestQuote.fuelSurcharge ||
-      bestQuote.Fuel || 
-      bestQuote.fuel ||
-      bestQuote.FSC ||
-      bestQuote.fsc ||
       0
     );
     
@@ -244,8 +288,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       bestQuote.accessorialCharge ||
       bestQuote.AccessorialCharges ||
       bestQuote.accessorialCharges ||
-      bestQuote.Accessorials || 
-      bestQuote.accessorials ||
       0
     );
     
@@ -254,11 +296,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
       bestQuote.totalAmount ||
       bestQuote.Total || 
       bestQuote.total || 
-      bestQuote.TotalCharge ||
-      bestQuote.totalCharge ||
-      bestQuote.GrandTotal ||
-      bestQuote.grandTotal ||
-      0
+      baseFreight + fuelSurcharge + accessorialTotal
     );
     
     const transitDays = parseInt(
@@ -266,20 +304,10 @@ class GlobalTranzProvider extends BaseGroundProvider {
       bestQuote.transitDays ||
       bestQuote.TransitTime ||
       bestQuote.transitTime ||
-      bestQuote.EstimatedTransitDays || 
-      bestQuote.estimatedTransitDays ||
       3
     );
 
-    const carrierName = 
-      bestQuote.CarrierName || 
-      bestQuote.carrierName ||
-      bestQuote.Carrier ||
-      bestQuote.carrier ||
-      'Unknown Carrier';
-
     console.log('💰 GlobalTranz Pricing:');
-    console.log(`   Carrier: ${carrierName}`);
     console.log(`   Base Freight: $${baseFreight.toFixed(2)}`);
     console.log(`   Fuel Surcharge: $${fuelSurcharge.toFixed(2)}`);
     console.log(`   Accessorials: $${accessorialTotal.toFixed(2)}`);
@@ -288,21 +316,15 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
     // Return in standardized format
     return this.formatStandardResponse({
-      service: bestQuote.Service || bestQuote.service || bestQuote.ServiceName || bestQuote.serviceName || 'LTL Standard',
+      service: 'LTL Standard',
       baseFreight: baseFreight,
       fuelSurcharge: fuelSurcharge,
       accessorialCharges: accessorialTotal,
       totalCost: totalCost,
       transitDays: transitDays,
-      guaranteed: bestQuote.Guaranteed || bestQuote.guaranteed || false,
-      quoteId: bestQuote.QuoteId || bestQuote.quoteId || bestQuote.Id || bestQuote.id || `GTZ-${Date.now()}`,
-      validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      
-      // Additional GlobalTranz specific data
-      carrierName: carrierName,
-      carrierCode: bestQuote.CarrierCode || bestQuote.carrierCode || bestQuote.SCAC || bestQuote.scac,
-      serviceType: bestQuote.ServiceType || bestQuote.serviceType || bestQuote.Service || bestQuote.service,
-      gtzQuoteId: bestQuote.QuoteId || bestQuote.quoteId || bestQuote.Id || bestQuote.id
+      guaranteed: false,
+      quoteId: bestQuote.QuoteId || bestQuote.quoteId || `GTZ-${Date.now()}`,
+      validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000)
     });
   }
 }
