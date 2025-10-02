@@ -6,7 +6,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
   constructor() {
     super('GlobalTranz', 'GLOBALTRANZ');
     
-    // Use dev environment as shown in the working curl
+    // Use dev environment that works with the test credentials
     this.baseUrl = process.env.GLOBALTRANZ_API_URL || 'https://dev.gtzintegrate.com';
     this.subscriptionKey = process.env.GLOBALTRANZ_SUBSCRIPTION_KEY || 'bcc0ec4997814c74a854f9a738a58cbd';
     
@@ -48,7 +48,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
     try {
       console.log('🚚 GlobalTranz: Fetching rates...');
       console.log('   Base URL:', this.baseUrl);
-      console.log('   Subscription Key:', this.subscriptionKey);
+      console.log('   Subscription Key:', this.subscriptionKey ? '***' + this.subscriptionKey.slice(-4) : 'Not set');
 
       // Build the request in GlobalTranz format
       const gtzRequest = this.buildRequest(requestData);
@@ -63,7 +63,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       try {
         const response = await this.client.post(fullUrl, gtzRequest);
         console.log('✅ GlobalTranz API call successful');
-        console.log('📥 Response:', JSON.stringify(response.data, null, 2));
         return this.parseResponse(response.data, requestData);
       } catch (error) {
         // Handle 422 error (no carriers found)
@@ -88,7 +87,6 @@ class GlobalTranzProvider extends BaseGroundProvider {
       console.error('❌ GlobalTranz error:', error.response?.data || error.message);
       if (error.response) {
         console.error('   Status:', error.response.status);
-        console.error('   Headers:', error.response.headers);
       }
       return this.logError(error, 'getRates');
     }
@@ -157,7 +155,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
     // Check if shipment is stackable
     const isStackable = items.some(i => i.Stackable);
 
-    // Build the request object matching the working curl example
+    // Build the request object matching the working API specification
     const request = {
       CustomerId: "012345", // Test customer ID from docs
       GuaranteedRates: false,
@@ -225,17 +223,21 @@ class GlobalTranzProvider extends BaseGroundProvider {
       return null;
     }
 
+    console.log(`💰 Found ${quotes.length} carrier quotes`);
+
+    // Parse all quotes
     const results = quotes.map(quote => {
       // Extract carrier info
-      const carrierName = quote.CarrierDetail?.CarrierName || quote.CarrierName || 'GlobalTranz Carrier';
-      const carrierCode = quote.CarrierDetail?.CarrierCode || quote.CarrierCode || 'GTZ';
+      const carrierName = quote.CarrierDetail?.CarrierName || 'Unknown Carrier';
+      const carrierCode = quote.CarrierDetail?.CarrierCode || 'UNK';
       
-      // Extract pricing - based on the example response structure
-      const ltlAmount = parseFloat(quote.LtlAmount || 0);
+      // Extract the main price - LtlAmount is the total
+      const totalCost = parseFloat(quote.LtlAmount || 0);
       
       // Extract charges breakdown if available
-      let baseFreight = ltlAmount;
+      let baseFreight = 0;
       let fuelSurcharge = 0;
+      let discount = 0;
       let accessorialTotal = 0;
       
       if (quote.Charges && Array.isArray(quote.Charges)) {
@@ -243,31 +245,30 @@ class GlobalTranzProvider extends BaseGroundProvider {
           const amount = parseFloat(charge.Charge || 0);
           const name = (charge.Name || '').toLowerCase();
           
-          if (name.includes('fuel')) {
-            fuelSurcharge += amount;
-          } else if (name.includes('initial') || name.includes('base')) {
-            // Already included in ltlAmount
+          if (name.includes('initial') || name.includes('base') || name.includes('cost')) {
+            baseFreight = amount;
+          } else if (name.includes('fuel')) {
+            fuelSurcharge = amount;
+          } else if (name.includes('discount')) {
+            discount = amount; // Note: discount is negative
           } else {
             accessorialTotal += amount;
           }
         });
       }
       
-      // Calculate totals
-      const totalCost = ltlAmount;
-      
       // Extract transit time
       const transitDays = parseInt(quote.LtlServiceDays || quote.CalendarDays || 3);
+      const deliveryDate = quote.EstimatedDeliveryDate || quote.LtlDeliveryDate;
       
-      console.log(`💰 Quote from ${carrierName}:`);
-      console.log(`   LTL Amount: $${ltlAmount.toFixed(2)}`);
-      console.log(`   Transit: ${transitDays} days`);
+      console.log(`  • ${carrierName}: $${totalCost.toFixed(2)} (${transitDays} days)`);
 
-      return this.formatStandardResponse({
-        service: quote.LtlServiceTypeName || 'LTL Standard',
-        carrier: carrierName,
+      return {
+        carrierName: carrierName,
         carrierCode: carrierCode,
+        service: quote.LtlServiceTypeName || 'LTL Standard',
         baseFreight: baseFreight,
+        discount: discount,
         fuelSurcharge: fuelSurcharge,
         accessorialCharges: accessorialTotal,
         totalCost: totalCost,
@@ -275,13 +276,27 @@ class GlobalTranzProvider extends BaseGroundProvider {
         guaranteed: quote.GuaranteedRate ? true : false,
         quoteId: quote.QuoteId || `GTZ-${Date.now()}`,
         validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        deliveryDate: quote.EstimatedDeliveryDate || quote.LtlDeliveryDate
-      });
+        deliveryDate: deliveryDate,
+        // Include carrier performance metrics
+        carrierOnTime: quote.CarrierDetail?.CarrierOnTimeforCustomer || 'N/A',
+        // Include any special messages
+        customMessage: quote.CustomMessage || null
+      };
     });
 
-    // Return the best (cheapest) quote
-    const bestQuote = results.sort((a, b) => a.totalCost - b.totalCost)[0];
-    return bestQuote;
+    // Sort by price to find the best rate
+    results.sort((a, b) => a.totalCost - b.totalCost);
+    
+    console.log(`\n✅ Best quote: ${results[0].carrierName} at $${results[0].totalCost.toFixed(2)}`);
+    
+    // Return the best (cheapest) quote using the standard format
+    return this.formatStandardResponse({
+      ...results[0],
+      provider: this.name,
+      carrier: results[0].carrierName,
+      // You could also return all quotes if needed:
+      // allQuotes: results
+    });
   }
 }
 
