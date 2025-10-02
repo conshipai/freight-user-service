@@ -214,7 +214,7 @@ class GlobalTranzProvider extends BaseGroundProvider {
 
   parseResponse(response, requestData) {
     console.log('📦 Parsing GlobalTranz response...');
-    
+      console.log('📥 RAW GlobalTranz response:', JSON.stringify(response, null, 2));
     // Handle both array and single object responses
     const quotes = Array.isArray(response) ? response : [response];
     
