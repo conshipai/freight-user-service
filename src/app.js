@@ -37,6 +37,7 @@ const groundQuoteRoutes = require('./routes/groundQuotes');
 const bolRoutes = require('./routes/bols');
 const carrierAccountRoutes = require('./routes/carrierAccounts');
 const cacheRoutes = require('./routes/cache');
+const purchaseOrderRoutes = require('./routes/purchaseOrders');
 
 // ✅ NEW: sequences & storage
 const sequenceRoutes = require('./routes/sequences');
@@ -61,6 +62,7 @@ app.use('/api/products', require('./routes/products'));
 app.use('/api/carrier-accounts', require('./routes/carrierAccounts'));
 app.use('/api', cacheRoutes);
 app.use('/api/booking-requests', bookingRequestRoutes);
+app.use('/api/purchase-orders', purchaseOrderRoutes);
 
 // ✅ NEW: mount sequences & storage
 app.use('/api/sequences', sequenceRoutes);
