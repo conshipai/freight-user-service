@@ -55,6 +55,12 @@ const UserSchema = new Schema(
     },
 
     phone: { type: String },
+    passwordManagerRole: {  // ADD THIS NEW FIELD
+      type: String,
+      enum: ['admin', 'manager', 'user'],
+      default: 'user'
+    },
+    
     lastLoginAt: { type: Date }
   },
   { timestamps: true }
