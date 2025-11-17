@@ -7,12 +7,10 @@ const auth = require('../middleware/auth');
 
 // ========================================
 // PUBLIC TWILIO TEST ENDPOINT - NO AUTH REQUIRED
-// Put this FIRST before any auth middleware
 // ========================================
 router.get('/test-twilio-public', async (req, res) => {
   console.log('🔧 Testing Twilio configuration (PUBLIC endpoint)...');
   
-  // Check environment variables
   const config = {
     accountSid: process.env.TWILIO_ACCOUNT_SID ? '✅ Set' : '❌ Not set',
     authToken: process.env.TWILIO_AUTH_TOKEN ? '✅ Set' : '❌ Not set', 
@@ -22,7 +20,6 @@ router.get('/test-twilio-public', async (req, res) => {
   
   console.log('Twilio Config:', config);
   
-  // Check if all required variables are set
   if (config.accountSid.includes('❌') || 
       config.authToken.includes('❌') || 
       config.twilioPhone.includes('❌') || 
@@ -35,7 +32,6 @@ router.get('/test-twilio-public', async (req, res) => {
     });
   }
   
-  // Try to send test SMS
   try {
     const twilio = require('twilio');
     const client = twilio(
@@ -82,25 +78,31 @@ router.get('/test-twilio-public', async (req, res) => {
     });
   }
 });
-// ========================================
-// END OF PUBLIC TEST ENDPOINT
-// ========================================
 
 // Check if user can access password manager
 const checkPasswordAccess = async (req, res, next) => {
   const user = req.user;
   
-  // Only system_admin and conship_employee can access
-  if (user.role !== 'system_admin' && user.role !== 'conship_employee') {
-    return res.status(403).json({ error: 'Access denied to password manager' });
-  }
+  console.log('🔐 Checking password access for:', user.email, 'Role:', user.role);
   
-  // Set default role for system_admin
-  if (user.role === 'system_admin' && !user.passwordManagerRole) {
+  // System admins ALWAYS get admin access
+  if (user.role === 'system_admin') {
+    console.log('✅ System admin detected - granting full access');
     user.passwordManagerRole = 'admin';
+    return next();
   }
   
-  next();
+  // Conship employees can access based on their passwordManagerRole
+  if (user.role === 'conship_employee') {
+    if (!user.passwordManagerRole) {
+      user.passwordManagerRole = 'user'; // Default to user if not set
+    }
+    return next();
+  }
+  
+  // Everyone else is denied
+  console.log('❌ Access denied - not system_admin or conship_employee');
+  return res.status(403).json({ error: 'Access denied to password manager' });
 };
 
 // Log audit trail
@@ -127,7 +129,6 @@ router.get('/', auth, checkPasswordAccess, async (req, res) => {
     
     let query = { isActive: true };
     
-    // Add filters if provided
     if (category && category !== 'all') {
       query.category = category;
     }
@@ -161,12 +162,10 @@ router.get('/:id', auth, checkPasswordAccess, async (req, res) => {
       return res.status(404).json({ error: 'Password not found' });
     }
     
-    // Update last accessed
     password.lastAccessed = new Date();
     password.lastAccessedBy = req.user._id;
     await password.save();
     
-    // Log audit
     await logAudit(req.user, 'view', password);
     
     res.json(password);
@@ -176,13 +175,17 @@ router.get('/:id', auth, checkPasswordAccess, async (req, res) => {
   }
 });
 
-// CREATE password
+// CREATE password - FIXED FOR SYSTEM ADMIN
 router.post('/', auth, checkPasswordAccess, async (req, res) => {
   try {
-    const userRole = req.user.passwordManagerRole || 'user';
+    // System admins can always create
+    const userRole = req.user.role === 'system_admin' ? 'admin' : (req.user.passwordManagerRole || 'user');
+    
+    console.log('🔑 Creating password. User:', req.user.email, 'Role:', req.user.role, 'Password Role:', userRole);
     
     // Check permission
     if (userRole === 'user') {
+      console.log('❌ User role cannot create passwords');
       return res.status(403).json({ error: 'No permission to create passwords' });
     }
     
@@ -194,17 +197,18 @@ router.post('/', auth, checkPasswordAccess, async (req, res) => {
     await password.save();
     await logAudit(req.user, 'create', password);
     
+    console.log('✅ Password created successfully');
     res.status(201).json(password);
   } catch (error) {
-    console.error('Error creating password:', error);
-    res.status(500).json({ error: 'Failed to create password' });
+    console.error('❌ Error creating password:', error);
+    res.status(500).json({ error: error.message || 'Failed to create password' });
   }
 });
 
 // UPDATE password
 router.put('/:id', auth, checkPasswordAccess, async (req, res) => {
   try {
-    const userRole = req.user.passwordManagerRole || 'user';
+    const userRole = req.user.role === 'system_admin' ? 'admin' : (req.user.passwordManagerRole || 'user');
     
     if (userRole === 'user') {
       return res.status(403).json({ error: 'No permission to edit passwords' });
@@ -231,7 +235,7 @@ router.put('/:id', auth, checkPasswordAccess, async (req, res) => {
 // DELETE password
 router.delete('/:id', auth, checkPasswordAccess, async (req, res) => {
   try {
-    const userRole = req.user.passwordManagerRole || 'user';
+    const userRole = req.user.role === 'system_admin' ? 'admin' : (req.user.passwordManagerRole || 'user');
     
     if (userRole === 'user') {
       return res.status(403).json({ error: 'No permission to delete passwords' });
@@ -242,7 +246,6 @@ router.delete('/:id', auth, checkPasswordAccess, async (req, res) => {
       return res.status(404).json({ error: 'Password not found' });
     }
     
-    // Soft delete
     password.isActive = false;
     await password.save();
     
@@ -273,11 +276,10 @@ router.post('/audit', auth, checkPasswordAccess, async (req, res) => {
 });
 
 // GET audit logs
-router.get('/audit', auth, checkPasswordAccess, async (req, res) => {
+router.get('/audit/logs', auth, checkPasswordAccess, async (req, res) => {
   try {
-    const userRole = req.user.passwordManagerRole || 'user';
+    const userRole = req.user.role === 'system_admin' ? 'admin' : (req.user.passwordManagerRole || 'user');
     
-    // Only managers and admins can view audit logs
     if (userRole === 'user') {
       return res.status(403).json({ error: 'No permission to view audit logs' });
     }
@@ -301,7 +303,6 @@ router.post('/panic', auth, checkPasswordAccess, async (req, res) => {
     
     await logAudit(req.user, 'panic_button', null, `PANIC: ${message}`);
     
-    // TODO: Add email notification to admin
     console.error(`PANIC ALERT from ${req.user.email}: ${message}`);
     
     res.json({ message: 'Emergency alert sent to administrator' });
@@ -315,9 +316,9 @@ router.post('/panic', auth, checkPasswordAccess, async (req, res) => {
 router.get('/permissions', auth, checkPasswordAccess, async (req, res) => {
   try {
     const User = require('../models/User');
+    const userRole = req.user.role === 'system_admin' ? 'admin' : (req.user.passwordManagerRole || 'user');
     
-    // Only admins can manage users
-    if (req.user.passwordManagerRole !== 'admin') {
+    if (userRole !== 'admin') {
       return res.status(403).json({ error: 'No permission to manage users' });
     }
     
