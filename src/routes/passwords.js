@@ -254,4 +254,81 @@ router.get('/permissions', auth, checkPasswordAccess, async (req, res) => {
   }
 });
 
+// ========================================
+// TWILIO TEST ENDPOINT - Remove after testing
+// ========================================
+router.get('/test-twilio', async (req, res) => {
+  console.log('🔧 Testing Twilio configuration...');
+  
+  // Check environment variables
+  const config = {
+    accountSid: process.env.TWILIO_ACCOUNT_SID ? '✅ Set' : '❌ Not set',
+    authToken: process.env.TWILIO_AUTH_TOKEN ? '✅ Set' : '❌ Not set', 
+    twilioPhone: process.env.TWILIO_PHONE_NUMBER || '❌ Not set',
+    adminPhone: process.env.ADMIN_PHONE_NUMBER || '❌ Not set'
+  };
+  
+  console.log('Twilio Config:', config);
+  
+  // Check if all required variables are set
+  if (config.accountSid.includes('❌') || 
+      config.authToken.includes('❌') || 
+      config.twilioPhone.includes('❌') || 
+      config.adminPhone.includes('❌')) {
+    return res.json({
+      success: false,
+      message: 'Twilio not configured properly',
+      config,
+      instructions: 'Please check environment variables in Coolify'
+    });
+  }
+  
+  // Try to send test SMS
+  try {
+    const twilio = require('twilio');
+    const client = twilio(
+      process.env.TWILIO_ACCOUNT_SID,
+      process.env.TWILIO_AUTH_TOKEN
+    );
+    
+    console.log('📱 Sending test SMS to:', process.env.ADMIN_PHONE_NUMBER);
+    
+    const message = await client.messages.create({
+      body: '✅ Password Manager Test: Twilio is working! Your SMS configuration is correct.',
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: process.env.ADMIN_PHONE_NUMBER
+    });
+    
+    console.log('✅ SMS sent successfully! SID:', message.sid);
+    
+    res.json({
+      success: true,
+      message: 'Test SMS sent successfully!',
+      messageSid: message.sid,
+      to: message.to,
+      from: message.from,
+      status: message.status,
+      config
+    });
+  } catch (error) {
+    console.error('❌ Twilio error:', error);
+    res.json({
+      success: false,
+      error: error.message,
+      config,
+      troubleshooting: {
+        possibleIssues: [
+          '1. Check phone numbers are in E.164 format (+1234567890)',
+          '2. Verify your Twilio account is active',
+          '3. Confirm you purchased a phone number in Twilio',
+          '4. For trial accounts, verify recipient number in Twilio console',
+          '5. Check Twilio account has SMS geographic permissions for your country'
+        ],
+        twilioErrorCode: error.code,
+        twilioMoreInfo: error.moreInfo
+      }
+    });
+  }
+});
+
 module.exports = router;
